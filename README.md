@@ -84,9 +84,11 @@ Permissions: `contents: read`, `pull-requests: read` (lint only-new-issues).
 ### terraform.yml and terraform-apply.yml
 
 Permissions: `contents: read`, `id-token: write`. Each job installs pinned
-tofu, terragrunt and tflint (sha256-checked), exports `env`, and runs
-`terragrunt run --all` per `environments_dir` line. `apply` runs only on
-`apply_ref` and queues on `terraform-apply-<repo>` without cancelling.
+tofu, terragrunt and tflint (sha256-checked), exports `env` (after the Vault
+login), and runs `terragrunt run --all` per `environments_dir` line. `apply`
+runs only on `apply_ref` and queues on `terraform-apply-<repo>` without
+cancelling. Both files carry the same tool pins and export script; bump them
+together (`self-test.yml` fails if the export scripts drift).
 
 | Input | Type | Default | Description |
 |---|---|---|---|
@@ -104,10 +106,11 @@ tofu, terragrunt and tflint (sha256-checked), exports `env`, and runs
 | `vault_role` | string | `""` | Plan/apply Vault role; empty skips the login |
 | `vault_secrets` | string | `""` | `hashicorp/vault-action` `secrets` mapping |
 | `reachability_urls` | string | `""` | Plan only: newline-separated URLs that must answer before planning |
-| `env` | string | `""` | Newline-separated `KEY=value` exported before terragrunt; keys match `^[A-Z_][A-Z0-9_]*$` or `TF_VAR_<name>`, and `GITHUB_*`, `RUNNER_*`, `ACTIONS_*`, `PATH`, `LD_*`, `BASH_ENV`, `NODE_OPTIONS` are rejected |
+| `env` | string | `""` | Newline-separated `KEY=value` exported before terragrunt; keys match `^[A-Z_][A-Z0-9_]*$` or `TF_VAR_<name>`, and `GITHUB_*`, `RUNNER_*`, `ACTIONS_*`, `PATH`, `LD_*`, `BASH_ENV`, `NODE_*`, `*_PROXY`, `SSL_CERT_*`, `CA_BUNDLE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `VAULT_*`, `GIT_*`, `HOME`, `TF_CLI_CONFIG_FILE`, `TF_PLUGIN_CACHE_DIR`, `TG_TF_PATH`, `TERRAGRUNT_TFPATH` are rejected |
 
-Secret `tf_env` takes the same `KEY=value` lines, masked; with `secrets:
-inherit` a repo or org secret named `TF_ENV` fills it. Prefer Vault.
+Secret `tf_env` takes the same `KEY=value` lines, masked, and reaches only
+`plan` and `apply`; with `secrets: inherit` a repo or org secret named `TF_ENV`
+fills it. Prefer Vault.
 
 ### release-vault-plugin.yml
 
@@ -207,7 +210,10 @@ Switching a repo to these workflows renames its checks, so update its required
 status checks to the names above.
 
 ```yaml
-# terraform repo: .github/workflows/plan.yml (pull_request) and apply.yml (push to main)
+# terraform repo: .github/workflows/plan.yml (pull_request)
+concurrency:
+  group: plan-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   terraform:
     uses: IUCLabs/workflows/.github/workflows/terraform.yml@v0.1.0
@@ -219,6 +225,12 @@ jobs:
       vault_role: terraform_example_plan
       vault_secrets: |
         consul_root/au/syd1/creds/terraform-example-plan token | CONSUL_HTTP_TOKEN
+      # init_args: ""  # terraform-authentik inits without -upgrade
+```
+
+```yaml
+# terraform repo: .github/workflows/apply.yml (push to main)
+jobs:
   apply:
     uses: IUCLabs/workflows/.github/workflows/terraform-apply.yml@v0.1.0
     permissions:

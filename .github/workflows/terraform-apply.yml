@@ -136,6 +136,16 @@ jobs:
           TFLINT_VERSION: ${{ inputs.tflint_version }}
           TFLINT_SHA256: ${{ inputs.tflint_sha256 }}
           CA_FILE: ${{ inputs.ca_file }}
+      - if: inputs.vault_role != ''
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: ${{ inputs.vault_addr }}
+          method: jwt
+          path: ${{ inputs.vault_path }}
+          role: ${{ inputs.vault_role }}
+          jwtGithubAudience: ${{ inputs.vault_addr }}
+          exportToken: true
+          secrets: ${{ inputs.vault_secrets }}
       - name: export env
         run: |
           export_lines() {
@@ -147,7 +157,8 @@ jobs:
               if [ "$key" = "$line" ]; then echo "::error::$1 line $n has no '='"; exit 1; fi
               if ! [[ $key =~ ^[A-Z_][A-Z0-9_]*$ || $key =~ ^TF_VAR_[A-Za-z0-9_]+$ ]]; then echo "::error::$1 line $n: key must match ^[A-Z_][A-Z0-9_]*\$ or be TF_VAR_<name>"; exit 1; fi
               case "$key" in
-                GITHUB_* | RUNNER_* | ACTIONS_* | PATH | LD_* | BASH_ENV | NODE_OPTIONS)
+                TF_VAR_*) ;;
+                GITHUB_* | RUNNER_* | ACTIONS_* | PATH | LD_* | BASH_ENV | NODE_* | *_PROXY | *_proxy | SSL_CERT_* | CA_BUNDLE | CURL_CA_BUNDLE | REQUESTS_CA_BUNDLE | VAULT_* | GIT_* | HOME | TF_CLI_CONFIG_FILE | TF_PLUGIN_CACHE_DIR | TG_TF_PATH | TERRAGRUNT_TFPATH)
                   echo "::error::$1 line $n: $key may not be set"; exit 1 ;;
               esac
               if [ "$1" = tf_env ]; then echo "::add-mask::${line#*=}"; fi
@@ -159,16 +170,6 @@ jobs:
         env:
           ENV_INPUT: ${{ inputs.env }}
           TF_ENV_SECRET: ${{ secrets.tf_env }}
-      - if: inputs.vault_role != ''
-        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
-        with:
-          url: ${{ inputs.vault_addr }}
-          method: jwt
-          path: ${{ inputs.vault_path }}
-          role: ${{ inputs.vault_role }}
-          jwtGithubAudience: ${{ inputs.vault_addr }}
-          exportToken: true
-          secrets: ${{ inputs.vault_secrets }}
       - id: init
         run: |
           read -ra args <<<"$INIT_ARGS"

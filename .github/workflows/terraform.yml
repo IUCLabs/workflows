@@ -82,7 +82,7 @@ on:
         default: ""
     secrets:
       tf_env:
-        description: Like the env input, for secret values; with secrets inherit, a TF_ENV repo or org secret.
+        description: Like the env input, for secret values, exported to the plan job only; with secrets inherit, a TF_ENV repo or org secret.
         required: false
 
 permissions: {}
@@ -135,7 +135,7 @@ jobs:
           CA_FILE: ${{ inputs.ca_file }}
       - &export-env
         name: export env
-        run: |
+        run: &export-script |
           export_lines() {
             local n=0 line key
             while IFS= read -r line || [ -n "$line" ]; do
@@ -145,7 +145,8 @@ jobs:
               if [ "$key" = "$line" ]; then echo "::error::$1 line $n has no '='"; exit 1; fi
               if ! [[ $key =~ ^[A-Z_][A-Z0-9_]*$ || $key =~ ^TF_VAR_[A-Za-z0-9_]+$ ]]; then echo "::error::$1 line $n: key must match ^[A-Z_][A-Z0-9_]*\$ or be TF_VAR_<name>"; exit 1; fi
               case "$key" in
-                GITHUB_* | RUNNER_* | ACTIONS_* | PATH | LD_* | BASH_ENV | NODE_OPTIONS)
+                TF_VAR_*) ;;
+                GITHUB_* | RUNNER_* | ACTIONS_* | PATH | LD_* | BASH_ENV | NODE_* | *_PROXY | *_proxy | SSL_CERT_* | CA_BUNDLE | CURL_CA_BUNDLE | REQUESTS_CA_BUNDLE | VAULT_* | GIT_* | HOME | TF_CLI_CONFIG_FILE | TF_PLUGIN_CACHE_DIR | TG_TF_PATH | TERRAGRUNT_TFPATH)
                   echo "::error::$1 line $n: $key may not be set"; exit 1 ;;
               esac
               if [ "$1" = tf_env ]; then echo "::add-mask::${line#*=}"; fi
@@ -156,7 +157,6 @@ jobs:
           export_lines tf_env "$TF_ENV_SECRET"
         env:
           ENV_INPUT: ${{ inputs.env }}
-          TF_ENV_SECRET: ${{ secrets.tf_env }}
       - run: |
           tofu fmt -check -diff -recursive
           terragrunt hcl fmt --check --diff
@@ -192,7 +192,7 @@ jobs:
           while IFS= read -r dir; do
             echo "--> tofu validate $dir"
             (cd "$dir" && tofu init -backend=false -input=false >/dev/null && tofu validate) || rc=1
-          done < <(git ls-files '*.tf' | xargs -r -n1 dirname | sort -u)
+          done < <(git ls-files '*.tf' | xargs -r -d '\n' -n1 dirname | sort -u)
           exit $rc
 
   plan:
@@ -206,7 +206,6 @@ jobs:
     steps:
       - *checkout
       - *setup
-      - *export-env
       - name: reachability
         if: inputs.reachability_urls != ''
         run: |
@@ -233,6 +232,11 @@ jobs:
           jwtGithubAudience: ${{ inputs.vault_addr }}
           exportToken: true
           secrets: ${{ inputs.vault_secrets }}
+      - name: export env
+        run: *export-script
+        env:
+          ENV_INPUT: ${{ inputs.env }}
+          TF_ENV_SECRET: ${{ secrets.tf_env }}
       - id: init
         run: |
           read -ra args <<<"$INIT_ARGS"

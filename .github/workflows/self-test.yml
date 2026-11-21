@@ -184,3 +184,51 @@ jobs:
       apply_ref: ${{ github.ref }}
       env: |
         TF_VAR_greeting=from-env
+
+  apply-default-branch:
+    uses: ./.github/workflows/terraform-apply.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      runs_on: ubuntu-latest
+      working_directory: testdata/terragrunt
+      environments_dir: environments
+      ca_file: ""
+      env: |
+        TF_VAR_greeting=from-env
+
+  assert-apply-guard:
+    needs: apply-default-branch
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - run: |
+          echo "apply-default-branch: $RESULT on $EVENT"
+          if [ "$EVENT" = pull_request ]; then [ "$RESULT" = skipped ]; else [ "$RESULT" = success ]; fi
+        env:
+          RESULT: ${{ needs.apply-default-branch.result }}
+          EVENT: ${{ github.event_name }}
+
+  terraform-env-rejects-bad:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: |
+          w=.github/workflows
+          yq 'explode(.) | .jobs.plan.steps[] | select(.name == "export env") | .run' "$w/terraform.yml" >"$RUNNER_TEMP/export.sh"
+          yq '.jobs.apply.steps[] | select(.name == "export env") | .run' "$w/terraform-apply.yml" | diff "$RUNNER_TEMP/export.sh" -
+          try() { : >"$RUNNER_TEMP/env.out"; GITHUB_ENV="$RUNNER_TEMP/env.out" ENV_INPUT="$1" TF_ENV_SECRET="" bash -e "$RUNNER_TEMP/export.sh" >/dev/null; }
+          for bad in 'lower=1' 'PATH=/x' 'GITHUB_X=1' 'NODE_OPTIONS=--x' 'HTTPS_PROXY=http://x' 'NOEQUALS'; do
+            if try "$bad"; then echo "::error::export env accepted '$bad'"; exit 1; fi
+            echo "rejected: $bad"
+          done
+          try 'TF_VAR_greeting=hi'
+          grep -qx 'TF_VAR_greeting=hi' "$RUNNER_TEMP/env.out"
+          echo "accepted: TF_VAR_greeting=hi"
