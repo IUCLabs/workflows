@@ -105,8 +105,9 @@ queued, and a newer queued run replaces an older one. On a run that applies, `fm
 | `apply_ref` | string | default branch | The ref allowed to apply |
 | `apply_concurrency_group` | string | `terraform-apply-<repo>` | Concurrency group that serialises applies |
 | `checks_on_apply` | boolean | `false` | Also run `fmt`, `tflint`, `validate`, `plan` on a run that applies |
+| `download_base` | string | `https://github.com` | Base for `<owner>/<repo>/releases/download/<tag>/<file>` tool downloads; `https://`, no trailing slash |
 | `tofu_version`, `terragrunt_version`, `tflint_version` (+ `_sha256`) | string | `1.10.3`, `1.0.3`, `0.62.0` | Tool versions and linux_amd64 checksums |
-| `ca_file` | string | `/etc/vault-ca/ca.crt` | Appended to the system bundle, exported as `CA_BUNDLE`, `VAULT_CACERT`, `SSL_CERT_FILE`; empty skips |
+| `ca_file` | string | `/etc/vault-ca/ca.crt` | Appended to the system bundle, used for the tool downloads, exported as `CA_BUNDLE`, `VAULT_CACERT`, `SSL_CERT_FILE`; empty skips |
 | `vault_addr` | string | `https://vault.service.consul:8200` | Exported as `VAULT_ADDR`; also the JWT audience |
 | `vault_path` | string | `jwt/github/iuclabs` | JWT auth mount |
 | `plan_vault_role` / `apply_vault_role` | string | `""` | Plan / apply Vault role; empty skips the login |
@@ -238,6 +239,8 @@ jobs:
       id-token: write
     with:
       environments_dir: environments
+      # artifactapi's GitHub proxy; reachable from internal runners only, not ubuntu-latest
+      download_base: https://artifactapi.k8s.syd1.au.unkin.net/api/v1/remote/github
       plan_reachability_urls: https://vault.service.consul:8200/v1/sys/health
       plan_vault_role: terraform_example_plan
       plan_vault_secrets: |
