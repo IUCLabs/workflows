@@ -1,4 +1,4 @@
-# tofu fmt, tflint, validate and a lock-free terragrunt plan. Callers grant `contents: read` and `id-token: write`.
+# tofu fmt, tflint, validate, a lock-free terragrunt plan, and apply on the apply event. Callers grant `contents: read` and `id-token: write`.
 name: terraform
 
 on:
@@ -20,6 +20,10 @@ on:
         description: terragrunt --parallelism for the plan.
         type: number
         default: 4
+      apply_parallelism:
+        description: terragrunt --parallelism for the apply.
+        type: number
+        default: 2
       init_args:
         description: Arguments after `--` for `terragrunt run --all init`.
         type: string
@@ -28,6 +32,22 @@ on:
         description: Arguments after `--` for `terragrunt run --all plan`.
         type: string
         default: -lock=false
+      apply_args:
+        description: Arguments after `--` for `terragrunt run --all apply`.
+        type: string
+        default: ""
+      apply_event:
+        description: github.event_name that applies.
+        type: string
+        default: push
+      apply_ref:
+        description: Only this ref applies; empty means the default branch.
+        type: string
+        default: ""
+      checks_on_apply:
+        description: Also run fmt, tflint, validate and plan on a run that applies.
+        type: boolean
+        default: false
       tofu_version:
         description: OpenTofu version.
         type: string
@@ -72,6 +92,14 @@ on:
         description: hashicorp/vault-action `secrets` mapping (`path key | ENV ;` lines).
         type: string
         default: ""
+      apply_vault_role:
+        description: Vault JWT role for the apply job; empty skips the Vault login.
+        type: string
+        default: ""
+      apply_vault_secrets:
+        description: hashicorp/vault-action `secrets` mapping for the apply job.
+        type: string
+        default: ""
       reachability_urls:
         description: Newline-separated URLs the plan job curls before planning; any unreachable one fails it.
         type: string
@@ -82,8 +110,12 @@ on:
         default: ""
     secrets:
       tf_env:
-        description: Like the env input, for secret values, exported to the plan job only; with secrets inherit, a TF_ENV repo or org secret.
+        description: Like the env input, for secret values, exported to the plan and apply jobs only; with secrets inherit, a TF_ENV repo or org secret.
         required: false
+    outputs:
+      applied:
+        description: "'true' when the apply job ran its apply step."
+        value: ${{ jobs.apply.outputs.applied }}
 
 permissions: {}
 
@@ -93,6 +125,7 @@ env:
 
 jobs:
   fmt:
+    if: inputs.checks_on_apply || github.event_name != inputs.apply_event || github.ref != (inputs.apply_ref || format('refs/heads/{0}', github.event.repository.default_branch))
     runs-on: ${{ inputs.runs_on }}
     permissions:
       contents: read
@@ -162,6 +195,7 @@ jobs:
           terragrunt hcl fmt --check --diff
 
   tflint:
+    if: inputs.checks_on_apply || github.event_name != inputs.apply_event || github.ref != (inputs.apply_ref || format('refs/heads/{0}', github.event.repository.default_branch))
     runs-on: ${{ inputs.runs_on }}
     permissions:
       contents: read
@@ -177,6 +211,7 @@ jobs:
           tflint --recursive
 
   validate:
+    if: inputs.checks_on_apply || github.event_name != inputs.apply_event || github.ref != (inputs.apply_ref || format('refs/heads/{0}', github.event.repository.default_branch))
     runs-on: ${{ inputs.runs_on }}
     permissions:
       contents: read
@@ -196,6 +231,7 @@ jobs:
           exit $rc
 
   plan:
+    if: inputs.checks_on_apply || github.event_name != inputs.apply_event || github.ref != (inputs.apply_ref || format('refs/heads/{0}', github.event.repository.default_branch))
     runs-on: ${{ inputs.runs_on }}
     permissions:
       contents: read
@@ -232,12 +268,14 @@ jobs:
           jwtGithubAudience: ${{ inputs.vault_addr }}
           exportToken: true
           secrets: ${{ inputs.vault_secrets }}
-      - name: export env
+      - &export-env-secret
+        name: export env
         run: *export-script
         env:
           ENV_INPUT: ${{ inputs.env }}
           TF_ENV_SECRET: ${{ secrets.tf_env }}
-      - id: init
+      - &init
+        id: init
         run: |
           read -ra args <<<"$INIT_ARGS"
           terragrunt run --all --non-interactive init ${args[0]:+-- "${args[@]}"}
@@ -255,4 +293,53 @@ jobs:
         env:
           PLAN_ARGS: ${{ inputs.plan_args }}
           PARALLELISM: ${{ inputs.parallelism }}
+          ENVIRONMENTS_DIR: ${{ inputs.environments_dir }}
+
+  apply:
+    needs: [validate]
+    if: >-
+      always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+      && github.event_name == inputs.apply_event
+      && github.ref == (inputs.apply_ref || format('refs/heads/{0}', github.event.repository.default_branch))
+    runs-on: ${{ inputs.runs_on }}
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: terraform-apply-${{ github.repository }}
+      cancel-in-progress: false
+    outputs:
+      applied: ${{ steps.apply.outputs.applied }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - *checkout
+      - *setup
+      - if: inputs.apply_vault_role != ''
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: ${{ inputs.vault_addr }}
+          method: jwt
+          path: ${{ inputs.vault_path }}
+          role: ${{ inputs.apply_vault_role }}
+          jwtGithubAudience: ${{ inputs.vault_addr }}
+          exportToken: true
+          secrets: ${{ inputs.apply_vault_secrets }}
+      - *export-env-secret
+      - *init
+      - id: apply
+        if: ${{ !cancelled() && steps.init.outcome == 'success' }}
+        run: |
+          read -ra args <<<"$APPLY_ARGS"
+          rc=0
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            terragrunt run --all --working-dir "$dir" --parallelism "$PARALLELISM" --non-interactive apply ${args[0]:+-- "${args[@]}"} || rc=1
+          done <<<"$ENVIRONMENTS_DIR"
+          echo "applied=true" >>"$GITHUB_OUTPUT"
+          exit $rc
+        env:
+          APPLY_ARGS: ${{ inputs.apply_args }}
+          PARALLELISM: ${{ inputs.apply_parallelism }}
           ENVIRONMENTS_DIR: ${{ inputs.environments_dir }}

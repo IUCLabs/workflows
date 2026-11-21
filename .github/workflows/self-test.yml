@@ -157,7 +157,7 @@ jobs:
   terraform:
     uses: ./.github/workflows/terraform.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
     if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
-    # the called plan job declares id-token: write for Vault; with no vault_role it is unused
+    # the called plan and apply jobs declare id-token: write for Vault; with no vault roles it is unused
     permissions:
       contents: read
       id-token: write
@@ -169,24 +169,12 @@ jobs:
       reachability_urls: https://registry.opentofu.org/.well-known/terraform.json
       env: |
         TF_VAR_greeting=from-env
-
-  apply:
-    uses: ./.github/workflows/terraform-apply.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
-    needs: terraform
-    permissions:
-      contents: read
-      id-token: write
-    with:
-      runs_on: ubuntu-latest
-      working_directory: testdata/terragrunt
-      environments_dir: environments
-      ca_file: ""
+      apply_event: ${{ github.event_name }}
       apply_ref: ${{ github.ref }}
-      env: |
-        TF_VAR_greeting=from-env
+      checks_on_apply: true
 
-  apply-default-branch:
-    uses: ./.github/workflows/terraform-apply.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+  terraform-default-branch:
+    uses: ./.github/workflows/terraform.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
     if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
     permissions:
       contents: read
@@ -198,19 +186,39 @@ jobs:
       ca_file: ""
       env: |
         TF_VAR_greeting=from-env
+      apply_event: ${{ github.event_name }}
 
-  assert-apply-guard:
-    needs: apply-default-branch
-    if: always()
+  terraform-other-event:
+    uses: ./.github/workflows/terraform.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      runs_on: ubuntu-latest
+      working_directory: testdata/terragrunt
+      environments_dir: environments
+      ca_file: ""
+      env: |
+        TF_VAR_greeting=from-env
+      apply_event: workflow_dispatch
+      apply_ref: ${{ github.ref }}
+
+  assert-apply-guards:
+    needs: [terraform, terraform-default-branch, terraform-other-event]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
       - run: |
-          echo "apply-default-branch: $RESULT on $EVENT"
-          if [ "$EVENT" = pull_request ]; then [ "$RESULT" = skipped ]; else [ "$RESULT" = success ]; fi
+          echo "applied: fixture=$FIXTURE default-branch=$DEFAULT_BRANCH other-event=$OTHER_EVENT on $REF"
+          [ "$FIXTURE" = true ]
+          [ -z "$OTHER_EVENT" ]
+          if [ "$REF" = refs/heads/main ]; then [ "$DEFAULT_BRANCH" = true ]; else [ -z "$DEFAULT_BRANCH" ]; fi
         env:
-          RESULT: ${{ needs.apply-default-branch.result }}
-          EVENT: ${{ github.event_name }}
+          FIXTURE: ${{ needs.terraform.outputs.applied }}
+          DEFAULT_BRANCH: ${{ needs.terraform-default-branch.outputs.applied }}
+          OTHER_EVENT: ${{ needs.terraform-other-event.outputs.applied }}
+          REF: ${{ github.ref }}
 
   terraform-env-rejects-bad:
     runs-on: ubuntu-latest
@@ -221,14 +229,17 @@ jobs:
         with:
           persist-credentials: false
       - run: |
-          w=.github/workflows
-          yq 'explode(.) | .jobs.plan.steps[] | select(.name == "export env") | .run' "$w/terraform.yml" >"$RUNNER_TEMP/export.sh"
-          yq '.jobs.apply.steps[] | select(.name == "export env") | .run' "$w/terraform-apply.yml" | diff "$RUNNER_TEMP/export.sh" -
-          try() { : >"$RUNNER_TEMP/env.out"; GITHUB_ENV="$RUNNER_TEMP/env.out" ENV_INPUT="$1" TF_ENV_SECRET="" bash -e "$RUNNER_TEMP/export.sh" >/dev/null; }
+          w=.github/workflows/terraform.yml
+          yq 'explode(.) | .jobs.plan.steps[] | select(.name == "export env") | .run' "$w" >"$RUNNER_TEMP/export.sh"
+          yq 'explode(.) | .jobs.apply.steps[] | select(.name == "export env") | .run' "$w" | diff "$RUNNER_TEMP/export.sh" -
+          try() { : >"$RUNNER_TEMP/env.out"; GITHUB_ENV="$RUNNER_TEMP/env.out" ENV_INPUT="$1" TF_ENV_SECRET="$2" bash -e "$RUNNER_TEMP/export.sh" >/dev/null; }
           for bad in 'lower=1' 'PATH=/x' 'GITHUB_X=1' 'NODE_OPTIONS=--x' 'HTTPS_PROXY=http://x' 'NOEQUALS'; do
-            if try "$bad"; then echo "::error::export env accepted '$bad'"; exit 1; fi
+            if try "$bad" ""; then echo "::error::export env accepted '$bad'"; exit 1; fi
             echo "rejected: $bad"
           done
-          try 'TF_VAR_greeting=hi'
+          if try "" 'VAULT_TOKEN=x'; then echo "::error::tf_env accepted VAULT_TOKEN"; exit 1; fi
+          echo "rejected tf_env: VAULT_TOKEN=x"
+          try 'TF_VAR_greeting=hi' 'TF_VAR_secret=s3cret'
           grep -qx 'TF_VAR_greeting=hi' "$RUNNER_TEMP/env.out"
-          echo "accepted: TF_VAR_greeting=hi"
+          grep -qx 'TF_VAR_secret=s3cret' "$RUNNER_TEMP/env.out"
+          echo "accepted: TF_VAR_greeting=hi, tf_env TF_VAR_secret"
