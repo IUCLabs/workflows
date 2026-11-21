@@ -103,6 +103,7 @@ queued, and a newer queued run replaces an older one. On a run that applies, `fm
 | `plan_args` / `apply_args` | string | `-lock=false` / `""` | Arguments after `--` for `plan` / `apply` |
 | `apply_event` | string | `push` | `github.event_name` that applies |
 | `apply_ref` | string | default branch | The ref allowed to apply |
+| `apply_concurrency_group` | string | `terraform-apply-<repo>` | Concurrency group that serialises applies |
 | `checks_on_apply` | boolean | `false` | Also run `fmt`, `tflint`, `validate`, `plan` on a run that applies |
 | `tofu_version`, `terragrunt_version`, `tflint_version` (+ `_sha256`) | string | `1.10.3`, `1.0.3`, `0.62.0` | Tool versions and linux_amd64 checksums |
 | `ca_file` | string | `/etc/vault-ca/ca.crt` | Appended to the system bundle, exported as `CA_BUNDLE`, `VAULT_CACERT`, `SSL_CERT_FILE`; empty skips |

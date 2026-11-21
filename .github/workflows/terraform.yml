@@ -20,6 +20,10 @@ on:
         description: terragrunt --parallelism for the plan.
         type: number
         default: 4
+      apply_concurrency_group:
+        description: Concurrency group serialising applies; empty uses `terraform-apply-<repository>`.
+        type: string
+        default: ""
       apply_parallelism:
         description: terragrunt --parallelism for the apply.
         type: number
@@ -306,7 +310,7 @@ jobs:
       contents: read
       id-token: write
     concurrency:
-      group: terraform-apply-${{ github.repository }}
+      group: ${{ inputs.apply_concurrency_group || format('terraform-apply-{0}', github.repository) }}
       cancel-in-progress: false
     outputs:
       applied: ${{ steps.apply.outputs.applied }}
