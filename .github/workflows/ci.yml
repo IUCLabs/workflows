@@ -51,6 +51,7 @@ jobs:
 
   release-vault-plugin:
     uses: ./.github/workflows/release-vault-plugin.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
     # the called job declares release permissions; snapshot mode uses none of them
     permissions:
       contents: write
@@ -75,6 +76,7 @@ jobs:
 
   release-terraform-provider:
     uses: ./.github/workflows/release-terraform-provider.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
     # the called job declares release permissions; snapshot mode uses none of them
     permissions:
       contents: write
@@ -97,6 +99,7 @@ jobs:
 
   release-go-image:
     uses: ./.github/workflows/release-go-image.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
     # the called job declares packages: write for the push; push: false uses none of it
     permissions:
       contents: read

@@ -49,6 +49,7 @@ jobs:
           go install github.com/google/ko@v0.19.1
           go install github.com/google/go-containerregistry/cmd/crane@v0.22.1
           echo "KO_DOCKER_REPO=ghcr.io/${GITHUB_REPOSITORY,,}" >> "${GITHUB_ENV}"
+          echo "TAG=${VERSION//\//-}" >> "${GITHUB_ENV}"
         env:
           GOTOOLCHAIN: auto
       - if: inputs.push
@@ -56,8 +57,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
       - run: >-
-          ko build --push="${PUSH}" --bare --sbom=none --platform linux/amd64 --tags "${VERSION//\//-}"
+          ko build --push="${PUSH}" --bare --sbom=none --platform linux/amd64 --tags "${TAG}"
           --image-label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
           "${MAIN:-./cmd/${GITHUB_REPOSITORY#*/}}"
       - if: inputs.push
-        run: crane tag "${KO_DOCKER_REPO}:${VERSION}" latest
+        run: crane tag "${KO_DOCKER_REPO}:${TAG}" latest

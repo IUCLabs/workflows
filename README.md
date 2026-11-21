@@ -10,10 +10,11 @@ action is pinned by commit SHA; Dependabot bumps them weekly.
 | `release-terraform-provider.yml` | goreleaser release, then PUTs the linux_amd64 zip to the artifactapi `terraform-unkin` registry |
 | `release-go-image.yml` | ko build of `ghcr.io/iuclabs/<repo>:<tag>`, then moves `latest` |
 
-Release workflows log in to Vault at `https://vault.service.consul:8200` via
-`jwt/github/iuclabs`. The goreleaser ones expect the caller's `.goreleaser.yml`
-to keep `release: {use_existing_draft: true, mode: keep-existing}`, so `make
-patch|minor|major` drafts the release and the tag push fills and publishes it.
+The goreleaser release workflows log in to Vault at
+`https://vault.service.consul:8200` via `jwt/github/iuclabs`. They expect the
+caller's `.goreleaser.yml` to keep `release: {use_existing_draft: true, mode:
+keep-existing}`, so `make patch|minor|major` drafts the release and the tag
+push fills and publishes it.
 
 ## Inputs
 
@@ -69,6 +70,9 @@ Permissions: `contents: read`, `packages: write`.
 | `push` | boolean | `true` | Push and move `latest`; `false` only builds |
 | `runs_on` | string | `iuclabs-release` | Runner label |
 | `working_directory` | string | `.` | Directory holding go.mod and `.ko.yaml` |
+
+It builds the Go image only. Repos with extra images (artifactapi's UI) keep
+that build and its `latest` tag in their own job with `needs:` on this one.
 
 No secrets are passed: the workflows use the caller's `GITHUB_TOKEN` and Vault
 OIDC.
