@@ -166,7 +166,7 @@ jobs:
       working_directory: testdata/terragrunt
       environments_dir: environments
       ca_file: ""
-      reachability_urls: https://registry.opentofu.org/.well-known/terraform.json
+      plan_reachability_urls: https://registry.opentofu.org/.well-known/terraform.json
       env: |
         TF_VAR_greeting=from-env
       apply_event: ${{ github.event_name }}

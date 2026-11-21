@@ -92,11 +92,11 @@ on:
         description: Vault JWT auth mount.
         type: string
         default: jwt/github/iuclabs
-      vault_role:
+      plan_vault_role:
         description: Vault JWT role for the plan job; empty skips the Vault login.
         type: string
         default: ""
-      vault_secrets:
+      plan_vault_secrets:
         description: hashicorp/vault-action `secrets` mapping (`path key | ENV ;` lines).
         type: string
         default: ""
@@ -108,7 +108,7 @@ on:
         description: hashicorp/vault-action `secrets` mapping for the apply job.
         type: string
         default: ""
-      reachability_urls:
+      plan_reachability_urls:
         description: Newline-separated URLs the plan job curls before planning; any unreachable one fails it.
         type: string
         default: ""
@@ -249,7 +249,7 @@ jobs:
       - *checkout
       - *setup
       - name: reachability
-        if: inputs.reachability_urls != ''
+        if: inputs.plan_reachability_urls != ''
         run: |
           rc=0
           while IFS= read -r url; do
@@ -263,17 +263,17 @@ jobs:
           done <<<"$URLS"
           exit $rc
         env:
-          URLS: ${{ inputs.reachability_urls }}
-      - if: inputs.vault_role != ''
+          URLS: ${{ inputs.plan_reachability_urls }}
+      - if: inputs.plan_vault_role != ''
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
           url: ${{ inputs.vault_addr }}
           method: jwt
           path: ${{ inputs.vault_path }}
-          role: ${{ inputs.vault_role }}
+          role: ${{ inputs.plan_vault_role }}
           jwtGithubAudience: ${{ inputs.vault_addr }}
           exportToken: true
-          secrets: ${{ inputs.vault_secrets }}
+          secrets: ${{ inputs.plan_vault_secrets }}
       - &export-env-secret
         name: export env
         run: *export-script
