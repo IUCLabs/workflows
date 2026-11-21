@@ -109,9 +109,9 @@ queued, and a newer queued run replaces an older one. On a run that applies, `fm
 | `ca_file` | string | `/etc/vault-ca/ca.crt` | Appended to the system bundle, exported as `CA_BUNDLE`, `VAULT_CACERT`, `SSL_CERT_FILE`; empty skips |
 | `vault_addr` | string | `https://vault.service.consul:8200` | Exported as `VAULT_ADDR`; also the JWT audience |
 | `vault_path` | string | `jwt/github/iuclabs` | JWT auth mount |
-| `vault_role` / `apply_vault_role` | string | `""` | Plan / apply Vault role; empty skips the login |
-| `vault_secrets` / `apply_vault_secrets` | string | `""` | Plan / apply `hashicorp/vault-action` `secrets` mapping |
-| `reachability_urls` | string | `""` | Plan only: newline-separated literal URLs (not expanded, so write the full URL, e.g. `https://vault.service.consul:8200/v1/sys/health`) that must answer with any HTTP status before planning |
+| `plan_vault_role` / `apply_vault_role` | string | `""` | Plan / apply Vault role; empty skips the login |
+| `plan_vault_secrets` / `apply_vault_secrets` | string | `""` | Plan / apply `hashicorp/vault-action` `secrets` mapping |
+| `plan_reachability_urls` | string | `""` | Plan only: newline-separated literal URLs (not expanded, so write the full URL, e.g. `https://vault.service.consul:8200/v1/sys/health`) that must answer with any HTTP status before planning |
 | `env` | string | `""` | Newline-separated `KEY=value` exported before terragrunt; keys match `^[A-Z_][A-Z0-9_]*$` or `TF_VAR_<name>`; each line needs `=`, else the run fails |
 
 Secret `tf_env` takes the same `KEY=value` lines, masked, and reaches only
@@ -238,9 +238,9 @@ jobs:
       id-token: write
     with:
       environments_dir: environments
-      reachability_urls: https://vault.service.consul:8200/v1/sys/health
-      vault_role: terraform_example_plan
-      vault_secrets: |
+      plan_reachability_urls: https://vault.service.consul:8200/v1/sys/health
+      plan_vault_role: terraform_example_plan
+      plan_vault_secrets: |
         consul_root/au/syd1/creds/terraform-example-plan token | CONSUL_HTTP_TOKEN
       apply_vault_role: terraform_example
       apply_vault_secrets: |
