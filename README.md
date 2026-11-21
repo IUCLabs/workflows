@@ -178,4 +178,9 @@ status checks to the names above.
 `make pre-commit`, `make lint` (actionlint and zizmor) and `make test` (runs
 `act` when installed). `self-test.yml` runs every workflow against `testdata/`
 with snapshot and no-push modes, and checks actionlint rejects
-`testdata/actions/bad/`. Its own required checks are `pre-commit` and `lint`. Releases: `make patch|minor|major`.
+`testdata/actions/bad/`. Releases: `make patch|minor|major`.
+
+This repo's own required checks are `pre-commit` and `lint`.
+
+actionlint and zizmor versions are pinned in `actions.yml`, `self-test.yml`,
+`Makefile` and `.pre-commit-config.yaml`; bump them together.
