@@ -1,0 +1,4 @@
+/.github/workflows/ @IUCLabs/maintainers
+/Makefile @IUCLabs/maintainers
+/.pre-commit-config.yaml @IUCLabs/maintainers
+/.github/CODEOWNERS @IUCLabs/maintainers
