@@ -41,6 +41,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+  pre-commit-workflow:
+    uses: ./.github/workflows/pre-commit.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    with:
+      working_directory: testdata/pre-commit
+      python_version: "3.13"
+      go_version_file: testdata/go-mod/go.mod
+
   go-ci:
     uses: ./.github/workflows/go-ci.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
     with:

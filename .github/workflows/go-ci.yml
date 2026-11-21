@@ -1,11 +1,15 @@
-# Go pre-commit, lint, test and build. Callers need only `contents: read`.
+# Go lint, test and build. Callers need only `contents: read`.
 name: go-ci
 
 on:
   workflow_call:
     inputs:
+      runs_on:
+        description: Runner label.
+        type: string
+        default: ubuntu-latest
       working_directory:
-        description: Directory holding go.mod; pre-commit always runs at the repo root.
+        description: Directory holding go.mod.
         type: string
         default: .
       go_vet:
@@ -40,23 +44,8 @@ on:
 permissions: {}
 
 jobs:
-  pre-commit:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: ${{ inputs.working_directory }}/go.mod
-          cache-dependency-path: ${{ inputs.working_directory }}/go.sum
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      - run: uvx pre-commit run --all-files --show-diff-on-failure
-
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     permissions:
       contents: read
     defaults:
@@ -80,7 +69,7 @@ jobs:
           working-directory: ${{ inputs.working_directory }}
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     permissions:
       contents: read
     defaults:
@@ -117,7 +106,7 @@ jobs:
           COVER_EXCLUDE: ${{ inputs.cover_exclude }}
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     permissions:
       contents: read
     defaults:

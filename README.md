@@ -5,7 +5,8 @@ action is pinned by commit SHA; Dependabot bumps them weekly.
 
 | Workflow | What it does |
 |---|---|
-| `go-ci.yml` | `pre-commit`, `lint` (go vet, optional golangci-lint), `test` (optional coverage gate) and `build` jobs |
+| `pre-commit.yml` | `uvx pre-commit run --all-files` |
+| `go-ci.yml` | `lint` (go vet, optional golangci-lint), `test` (optional coverage gate) and `build` jobs |
 | `release-vault-plugin.yml` | goreleaser release: RPMs, raw binary, checksums signed via the Vault gpg engine, and the `ghcr.io/iuclabs/<repo>:<tag>` plugin image |
 | `release-terraform-provider.yml` | goreleaser release, then PUTs the linux_amd64 zip to the artifactapi `terraform-unkin` registry |
 | `release-go-image.yml` | ko build of `ghcr.io/iuclabs/<repo>:<tag>`, then moves `latest` |
@@ -16,7 +17,21 @@ caller's `.goreleaser.yml` to keep `release: {use_existing_draft: true, mode:
 keep-existing}`, so `make patch|minor|major` drafts the release and the tag
 push fills and publishes it.
 
+Every workflow takes a `runs_on` string input (runner label) used by all of its
+jobs: `ubuntu-latest` for CI workflows, `iuclabs-release` for release ones.
+
 ## Inputs
+
+### pre-commit.yml
+
+Permissions: `contents: read`.
+
+| Input | Type | Default | Description |
+|---|---|---|---|
+| `runs_on` | string | `ubuntu-latest` | Runner label |
+| `working_directory` | string | `.` | Directory holding `.pre-commit-config.yaml`; hooks still see every file in the repo |
+| `python_version` | string | `""` | Python for uv to run pre-commit with; empty uses uv's default |
+| `go_version_file` | string | `""` | go.mod or `.go-version` path from the repo root, for hooks that need Go; empty skips setup-go |
 
 ### go-ci.yml
 
@@ -24,7 +39,8 @@ Permissions: `contents: read`.
 
 | Input | Type | Default | Description |
 |---|---|---|---|
-| `working_directory` | string | `.` | Directory holding go.mod; pre-commit always runs at the repo root |
+| `runs_on` | string | `ubuntu-latest` | Runner label |
+| `working_directory` | string | `.` | Directory holding go.mod |
 | `go_vet` | boolean | `true` | Run `go vet ./...` in `lint` |
 | `golangci_lint_version` | string | `""` | golangci-lint version; empty skips it |
 | `golangci_lint_only_new_issues` | boolean | `false` | Report only issues introduced by the change |
@@ -101,6 +117,12 @@ jobs:
 ```yaml
 # .github/workflows/ci.yml, dry-running the release config on every PR
 jobs:
+  pre-commit:
+    uses: IUCLabs/workflows/.github/workflows/pre-commit.yml@v0.1.0
+    permissions:
+      contents: read
+    with:
+      go_version_file: go.mod
   go-ci:
     uses: IUCLabs/workflows/.github/workflows/go-ci.yml@v0.1.0
     permissions:
@@ -117,7 +139,8 @@ jobs:
 ```
 
 Jobs run through a reusable workflow report as `<caller job> / <job>` (for
-example `go-ci / lint`), so update required status checks when switching.
+example `pre-commit / pre-commit` and `go-ci / lint`), so update required
+status checks when switching.
 
 ## Development
 
