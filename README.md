@@ -88,8 +88,9 @@ run --all` per `environments_dir` line.
 
 `apply` runs only when `github.event_name == apply_event` and the ref is
 `apply_ref` (default branch when empty); elsewhere it reports skipped. It
-needs `validate`, applies without a prior plan, and queues on
-`terraform-apply-<repo>` without cancelling. On a run that applies, `fmt`,
+needs `validate` and applies without a prior plan. On
+`terraform-apply-<repo>`, running applies are never cancelled; at most one is
+queued, and a newer queued run replaces an older one. On a run that applies, `fmt`,
 `tflint`, `validate` and `plan` are skipped unless `checks_on_apply` is set.
 
 | Input | Type | Default | Description |

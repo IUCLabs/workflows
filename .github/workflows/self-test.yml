@@ -220,6 +220,43 @@ jobs:
           OTHER_EVENT: ${{ needs.terraform-other-event.outputs.applied }}
           REF: ${{ github.ref }}
 
+  terraform-apply-unchecked:
+    uses: ./.github/workflows/terraform.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    # PR-only: a third main-branch apply would replace the queued one in terraform-apply-<repo>
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      runs_on: ubuntu-latest
+      working_directory: testdata/terragrunt
+      environments_dir: environments
+      ca_file: ""
+      env: |
+        TF_VAR_greeting=from-env
+      apply_event: ${{ github.event_name }}
+      apply_ref: ${{ github.ref }}
+      checks_on_apply: false
+
+  assert-apply-unchecked:
+    needs: terraform-apply-unchecked
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - run: |
+          [ "$APPLIED" = true ]
+          gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs" --jq '.jobs[] | "\(.name)=\(.conclusion)"' >jobs.txt
+          cat jobs.txt
+          for j in fmt tflint validate plan; do
+            grep -qx "terraform-apply-unchecked / $j=skipped" jobs.txt
+          done
+        env:
+          APPLIED: ${{ needs.terraform-apply-unchecked.outputs.applied }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+
   terraform-env-rejects-bad:
     runs-on: ubuntu-latest
     permissions:
@@ -230,6 +267,7 @@ jobs:
           persist-credentials: false
       - run: |
           w=.github/workflows/terraform.yml
+          # diff guards against un-anchoring the export env steps
           yq 'explode(.) | .jobs.plan.steps[] | select(.name == "export env") | .run' "$w" >"$RUNNER_TEMP/export.sh"
           yq 'explode(.) | .jobs.apply.steps[] | select(.name == "export env") | .run' "$w" | diff "$RUNNER_TEMP/export.sh" -
           try() { : >"$RUNNER_TEMP/env.out"; GITHUB_ENV="$RUNNER_TEMP/env.out" ENV_INPUT="$1" TF_ENV_SECRET="$2" bash -e "$RUNNER_TEMP/export.sh" >/dev/null; }
