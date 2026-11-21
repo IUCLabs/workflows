@@ -298,7 +298,12 @@ jobs:
           yq 'explode(.) | .jobs.fmt.steps[] | select(.name == "install tofu, terragrunt and tflint") | .run' .github/workflows/terraform.yml >"$RUNNER_TEMP/setup.sh"
           # stub curl logs the URL and fails, so nothing is downloaded
           mkdir -p "$RUNNER_TEMP/stub"
-          printf '#!/bin/sh\nfor a; do u=$a; done\necho "$u" >>"$CURL_LOG"\nexit 1\n' >"$RUNNER_TEMP/stub/curl"
+          cat >"$RUNNER_TEMP/stub/curl" <<'EOF'
+          #!/bin/sh
+          for a; do u=$a; done
+          echo "$u" >>"$CURL_LOG"
+          exit 1
+          EOF
           chmod +x "$RUNNER_TEMP/stub/curl"
           export CURL_LOG="$RUNNER_TEMP/curl.log" TOFU_VERSION=1.2.3
           try() { : >"$CURL_LOG"; PATH="$RUNNER_TEMP/stub:$PATH" DOWNLOAD_BASE="$1" CA_FILE="" GITHUB_ENV=/dev/null GITHUB_PATH=/dev/null bash -e "$RUNNER_TEMP/setup.sh" 2>&1; }
