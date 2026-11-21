@@ -16,7 +16,7 @@ on:
         description: Newline-separated terragrunt dirs, relative to working_directory, each planned with `run --all`.
         type: string
         default: .
-      parallelism:
+      plan_parallelism:
         description: terragrunt --parallelism for the plan.
         type: number
         default: 4
@@ -291,7 +291,7 @@ jobs:
           exit $rc
         env:
           PLAN_ARGS: ${{ inputs.plan_args }}
-          PARALLELISM: ${{ inputs.parallelism }}
+          PARALLELISM: ${{ inputs.plan_parallelism }}
           ENVIRONMENTS_DIR: ${{ inputs.environments_dir }}
 
   apply:

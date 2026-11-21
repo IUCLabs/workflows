@@ -98,7 +98,7 @@ queued, and a newer queued run replaces an older one. On a run that applies, `fm
 | `runs_on` | string | `iuclabs-infra` | Runner label |
 | `working_directory` | string | `.` | Directory holding the terraform/terragrunt tree |
 | `environments_dir` | string | `.` | Newline-separated terragrunt dirs, relative to `working_directory` |
-| `parallelism` / `apply_parallelism` | number | `4` / `2` | terragrunt `--parallelism` for plan / apply |
+| `plan_parallelism` / `apply_parallelism` | number | `4` / `2` | terragrunt `--parallelism` for plan / apply |
 | `init_args` | string | `-upgrade` | Arguments after `--` for `init` |
 | `plan_args` / `apply_args` | string | `-lock=false` / `""` | Arguments after `--` for `plan` / `apply` |
 | `apply_event` | string | `push` | `github.event_name` that applies |
