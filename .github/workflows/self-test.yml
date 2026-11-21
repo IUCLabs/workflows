@@ -60,6 +60,7 @@ jobs:
     with:
       working_directory: testdata/actions/good
       min_severity: informational
+      zizmor_config: ../../../zizmor.yml
 
   actions-rejects-bad:
     runs-on: ubuntu-latest
