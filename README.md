@@ -8,6 +8,7 @@ action is pinned by commit SHA; Dependabot bumps them weekly.
 | `pre-commit.yml` | `uvx pre-commit run --all-files`, or [prek](https://github.com/j178/prek) |
 | `actions.yml` | `lint` (actionlint, with shellcheck on `run:` blocks) and `audit` (zizmor) |
 | `go-ci.yml` | `lint` (go vet, optional golangci-lint), `test` (optional coverage gate) and `build` jobs |
+| `terraform.yml` | `fmt`, `tflint`, `validate`, a lock-free terragrunt `plan`, and `apply` on push to the default branch, queued per repo |
 | `release-vault-plugin.yml` | goreleaser release: RPMs, raw binary, checksums signed via the Vault gpg engine, and the `ghcr.io/iuclabs/<repo>:<tag>` plugin image |
 | `release-terraform-provider.yml` | goreleaser release, then PUTs the linux_amd64 zip to the artifactapi `terraform-unkin` registry |
 | `release-go-image.yml` | ko build of `ghcr.io/iuclabs/<repo>:<tag>`, then moves `latest` |
@@ -19,7 +20,8 @@ keep-existing}`, so `make patch|minor|major` drafts the release and the tag
 push fills and publishes it.
 
 Every workflow takes a `runs_on` string input (runner label) used by all of its
-jobs: `ubuntu-latest` for CI workflows, `iuclabs-release` for release ones.
+jobs: `ubuntu-latest` for CI workflows, `iuclabs-release` for release ones and
+`iuclabs-infra` for terraform ones.
 
 ## Caller job ids
 
@@ -32,6 +34,7 @@ what branch protection requires.
 | `ci` | `pre-commit.yml` | `ci / pre-commit` |
 | `actions` | `actions.yml` | `actions / lint`, `actions / audit` |
 | `go` | `go-ci.yml` | `go / lint`, `go / test`, `go / build` |
+| `terraform` | `terraform.yml` | `terraform / fmt`, `terraform / tflint`, `terraform / validate`, `terraform / plan`, `terraform / apply` |
 
 ## Inputs
 
@@ -75,6 +78,45 @@ Permissions: `contents: read`, `pull-requests: read` (lint only-new-issues).
 | `cover_min` | number | `0` | Minimum total coverage percent; 0 disables the gate |
 | `cover_exclude` | string | `""` | Extended regex of coverage profile lines left out of the gate |
 | `strip` | boolean | `true` | Build with `-trimpath -ldflags="-s -w"` |
+
+### terraform.yml
+
+Permissions: `contents: read`, `id-token: write`. Output: `applied` (`'true'`
+when the apply step ran). Each job installs pinned tofu, terragrunt and tflint
+(sha256-checked), exports `env` (after the Vault login), and runs `terragrunt
+run --all` per `environments_dir` line.
+
+`apply` runs only when `github.event_name == apply_event` and the ref is
+`apply_ref` (default branch when empty); elsewhere it reports skipped. It
+needs `validate` and applies without a prior plan. On
+`terraform-apply-<repo>`, running applies are never cancelled; at most one is
+queued, and a newer queued run replaces an older one. On a run that applies, `fmt`,
+`tflint`, `validate` and `plan` are skipped unless `checks_on_apply` is set.
+
+| Input | Type | Default | Description |
+|---|---|---|---|
+| `runs_on` | string | `iuclabs-infra` | Runner label |
+| `working_directory` | string | `.` | Directory holding the terraform/terragrunt tree |
+| `environments_dir` | string | `.` | Newline-separated terragrunt dirs, relative to `working_directory` |
+| `plan_parallelism` / `apply_parallelism` | number | `4` / `2` | terragrunt `--parallelism` for plan / apply |
+| `init_args` | string | `-upgrade` | Arguments after `--` for `init` |
+| `plan_args` / `apply_args` | string | `-lock=false` / `""` | Arguments after `--` for `plan` / `apply` |
+| `apply_event` | string | `push` | `github.event_name` that applies |
+| `apply_ref` | string | default branch | The ref allowed to apply |
+| `apply_concurrency_group` | string | `terraform-apply-<repo>` | Concurrency group that serialises applies |
+| `checks_on_apply` | boolean | `false` | Also run `fmt`, `tflint`, `validate`, `plan` on a run that applies |
+| `tofu_version`, `terragrunt_version`, `tflint_version` (+ `_sha256`) | string | `1.10.3`, `1.0.3`, `0.62.0` | Tool versions and linux_amd64 checksums |
+| `ca_file` | string | `/etc/vault-ca/ca.crt` | Appended to the system bundle, exported as `CA_BUNDLE`, `VAULT_CACERT`, `SSL_CERT_FILE`; empty skips |
+| `vault_addr` | string | `https://vault.service.consul:8200` | Exported as `VAULT_ADDR`; also the JWT audience |
+| `vault_path` | string | `jwt/github/iuclabs` | JWT auth mount |
+| `plan_vault_role` / `apply_vault_role` | string | `""` | Plan / apply Vault role; empty skips the login |
+| `plan_vault_secrets` / `apply_vault_secrets` | string | `""` | Plan / apply `hashicorp/vault-action` `secrets` mapping |
+| `plan_reachability_urls` | string | `""` | Plan only: newline-separated literal URLs (not expanded, so write the full URL, e.g. `https://vault.service.consul:8200/v1/sys/health`) that must answer with any HTTP status before planning |
+| `env` | string | `""` | Newline-separated `KEY=value` exported before terragrunt; keys match `^[A-Z_][A-Z0-9_]*$` or `TF_VAR_<name>`; each line needs `=`, else the run fails |
+
+Secret `tf_env` takes the same `KEY=value` lines, masked, and reaches only
+`plan` and `apply`; with `secrets: inherit` a repo or org secret named `TF_ENV`
+fills it. Prefer Vault.
 
 ### release-vault-plugin.yml
 
@@ -172,6 +214,39 @@ jobs:
 
 Switching a repo to these workflows renames its checks, so update its required
 status checks to the names above.
+
+```yaml
+# terraform repo: .github/workflows/terraform.yml
+name: terraform
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  terraform:
+    uses: IUCLabs/workflows/.github/workflows/terraform.yml@v0.1.0
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environments_dir: environments
+      plan_reachability_urls: https://vault.service.consul:8200/v1/sys/health
+      plan_vault_role: terraform_example_plan
+      plan_vault_secrets: |
+        consul_root/au/syd1/creds/terraform-example-plan token | CONSUL_HTTP_TOKEN
+      apply_vault_role: terraform_example
+      apply_vault_secrets: |
+        consul_root/au/syd1/creds/terraform-example token | CONSUL_HTTP_TOKEN
+      # init_args: ""  # terraform-authentik inits without -upgrade
+```
 
 ## Development
 
