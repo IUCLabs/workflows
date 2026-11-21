@@ -152,3 +152,34 @@ jobs:
       push: false
       runs_on: ubuntu-latest
       working_directory: testdata/go-mod
+
+  terraform:
+    uses: ./.github/workflows/terraform.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
+    # the called plan job declares id-token: write for Vault; with no vault_role it is unused
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      runs_on: ubuntu-latest
+      working_directory: testdata/terragrunt
+      environments_dir: environments
+      ca_file: ""
+      reachability_urls: https://registry.opentofu.org/.well-known/terraform.json
+      env: |
+        TF_VAR_greeting=from-env
+
+  apply:
+    uses: ./.github/workflows/terraform-apply.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    needs: terraform
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      runs_on: ubuntu-latest
+      working_directory: testdata/terragrunt
+      environments_dir: environments
+      ca_file: ""
+      apply_ref: ${{ github.ref }}
+      env: |
+        TF_VAR_greeting=from-env

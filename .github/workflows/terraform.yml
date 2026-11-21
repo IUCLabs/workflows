@@ -1,0 +1,254 @@
+# tofu fmt, tflint, validate and a lock-free terragrunt plan. Callers grant `contents: read` and `id-token: write`.
+name: terraform
+
+on:
+  workflow_call:
+    inputs:
+      runs_on:
+        description: Runner label.
+        type: string
+        default: iuclabs-infra
+      working_directory:
+        description: Repo directory holding the terraform and terragrunt tree.
+        type: string
+        default: .
+      environments_dir:
+        description: Newline-separated terragrunt dirs, relative to working_directory, each planned with `run --all`.
+        type: string
+        default: .
+      parallelism:
+        description: terragrunt --parallelism for the plan.
+        type: number
+        default: 4
+      init_args:
+        description: Arguments after `--` for `terragrunt run --all init`.
+        type: string
+        default: -upgrade
+      plan_args:
+        description: Arguments after `--` for `terragrunt run --all plan`.
+        type: string
+        default: -lock=false
+      tofu_version:
+        description: OpenTofu version.
+        type: string
+        default: 1.10.3
+      tofu_sha256:
+        description: sha256 of tofu_<version>_linux_amd64.tar.gz.
+        type: string
+        default: 610464b31c6c5c9a6e1f282995117111b98464f337e2df1bb0a9958fee5e82bd
+      terragrunt_version:
+        description: Terragrunt version.
+        type: string
+        default: 1.0.3
+      terragrunt_sha256:
+        description: sha256 of terragrunt_linux_amd64.
+        type: string
+        default: e27c202df4383712e55b39e36dedd9439688ac3ac745c1f71521437f831274b1
+      tflint_version:
+        description: TFLint version.
+        type: string
+        default: 0.62.0
+      tflint_sha256:
+        description: sha256 of tflint_linux_amd64.zip.
+        type: string
+        default: 000400d7f4c2236d9ed4b35fec3ee95617c3747571593cc6138169fc78cc226a
+      ca_file:
+        description: Internal CA appended to the system bundle and exported as CA_BUNDLE, VAULT_CACERT and SSL_CERT_FILE; empty skips.
+        type: string
+        default: /etc/vault-ca/ca.crt
+      vault_addr:
+        description: Vault address, exported as VAULT_ADDR and used as the JWT audience.
+        type: string
+        default: https://vault.service.consul:8200
+      vault_path:
+        description: Vault JWT auth mount.
+        type: string
+        default: jwt/github/iuclabs
+      vault_role:
+        description: Vault JWT role for the plan job; empty skips the Vault login.
+        type: string
+        default: ""
+      vault_secrets:
+        description: hashicorp/vault-action `secrets` mapping (`path key | ENV ;` lines).
+        type: string
+        default: ""
+      reachability_urls:
+        description: Newline-separated URLs the plan job curls before planning; any unreachable one fails it.
+        type: string
+        default: ""
+      env:
+        description: Newline-separated KEY=value pairs exported to every job before terragrunt runs.
+        type: string
+        default: ""
+    secrets:
+      tf_env:
+        description: Like the env input, for secret values; with secrets inherit, a TF_ENV repo or org secret.
+        required: false
+
+permissions: {}
+
+env:
+  VAULT_ADDR: ${{ inputs.vault_addr }}
+  TF_IN_AUTOMATION: "1"
+
+jobs:
+  fmt:
+    runs-on: ${{ inputs.runs_on }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - &checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - &setup
+        name: install tofu, terragrunt and tflint
+        run: |
+          bin="$RUNNER_TEMP/bin"
+          dl="$RUNNER_TEMP/dl"
+          mkdir -p "$bin" "$dl"
+          fetch() {
+            curl -fsSL --retry 3 -o "$dl/$1" "$2"
+            echo "$3  $dl/$1" | sha256sum -c -
+          }
+          fetch tofu.tar.gz "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.tar.gz" "$TOFU_SHA256"
+          tar -xzf "$dl/tofu.tar.gz" -C "$bin" tofu
+          fetch terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_amd64" "$TERRAGRUNT_SHA256"
+          install -m0755 "$dl/terragrunt" "$bin/terragrunt"
+          fetch tflint.zip "https://github.com/terraform-linters/tflint/releases/download/v${TFLINT_VERSION}/tflint_linux_amd64.zip" "$TFLINT_SHA256"
+          unzip -qo "$dl/tflint.zip" tflint -d "$bin"
+          echo "$bin" >>"$GITHUB_PATH"
+          if [ -n "$CA_FILE" ]; then
+            cat /etc/ssl/certs/ca-certificates.crt "$CA_FILE" >"$RUNNER_TEMP/ca-bundle.crt"
+            for v in CA_BUNDLE VAULT_CACERT SSL_CERT_FILE; do echo "$v=$RUNNER_TEMP/ca-bundle.crt" >>"$GITHUB_ENV"; done
+          fi
+        env:
+          TOFU_VERSION: ${{ inputs.tofu_version }}
+          TOFU_SHA256: ${{ inputs.tofu_sha256 }}
+          TERRAGRUNT_VERSION: ${{ inputs.terragrunt_version }}
+          TERRAGRUNT_SHA256: ${{ inputs.terragrunt_sha256 }}
+          TFLINT_VERSION: ${{ inputs.tflint_version }}
+          TFLINT_SHA256: ${{ inputs.tflint_sha256 }}
+          CA_FILE: ${{ inputs.ca_file }}
+      - &export-env
+        name: export env
+        run: |
+          export_lines() {
+            local n=0 line key
+            while IFS= read -r line || [ -n "$line" ]; do
+              n=$((n + 1))
+              [ -z "${line//[[:space:]]/}" ] && continue
+              key=${line%%=*}
+              if [ "$key" = "$line" ]; then echo "::error::$1 line $n has no '='"; exit 1; fi
+              if ! [[ $key =~ ^[A-Z_][A-Z0-9_]*$ || $key =~ ^TF_VAR_[A-Za-z0-9_]+$ ]]; then echo "::error::$1 line $n: key must match ^[A-Z_][A-Z0-9_]*\$ or be TF_VAR_<name>"; exit 1; fi
+              case "$key" in
+                GITHUB_* | RUNNER_* | ACTIONS_* | PATH | LD_* | BASH_ENV | NODE_OPTIONS)
+                  echo "::error::$1 line $n: $key may not be set"; exit 1 ;;
+              esac
+              if [ "$1" = tf_env ]; then echo "::add-mask::${line#*=}"; fi
+              printf '%s=%s\n' "$key" "${line#*=}" >>"$GITHUB_ENV"
+            done <<<"$2"
+          }
+          export_lines env "$ENV_INPUT"
+          export_lines tf_env "$TF_ENV_SECRET"
+        env:
+          ENV_INPUT: ${{ inputs.env }}
+          TF_ENV_SECRET: ${{ secrets.tf_env }}
+      - run: |
+          tofu fmt -check -diff -recursive
+          terragrunt hcl fmt --check --diff
+
+  tflint:
+    runs-on: ${{ inputs.runs_on }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - *checkout
+      - *setup
+      - *export-env
+      - run: |
+          tflint --init
+          tflint --recursive
+
+  validate:
+    runs-on: ${{ inputs.runs_on }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - *checkout
+      - *setup
+      - *export-env
+      - run: |
+          rc=0
+          while IFS= read -r dir; do
+            echo "--> tofu validate $dir"
+            (cd "$dir" && tofu init -backend=false -input=false >/dev/null && tofu validate) || rc=1
+          done < <(git ls-files '*.tf' | xargs -r -n1 dirname | sort -u)
+          exit $rc
+
+  plan:
+    runs-on: ${{ inputs.runs_on }}
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - *checkout
+      - *setup
+      - *export-env
+      - name: reachability
+        if: inputs.reachability_urls != ''
+        run: |
+          rc=0
+          while IFS= read -r url; do
+            [ -z "$url" ] && continue
+            if code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 ${CA_BUNDLE:+--cacert "$CA_BUNDLE"} "$url"); then
+              echo "ok   $code $url"
+            else
+              echo "::error::unreachable: $url"
+              rc=1
+            fi
+          done <<<"$URLS"
+          exit $rc
+        env:
+          URLS: ${{ inputs.reachability_urls }}
+      - if: inputs.vault_role != ''
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: ${{ inputs.vault_addr }}
+          method: jwt
+          path: ${{ inputs.vault_path }}
+          role: ${{ inputs.vault_role }}
+          jwtGithubAudience: ${{ inputs.vault_addr }}
+          exportToken: true
+          secrets: ${{ inputs.vault_secrets }}
+      - id: init
+        run: |
+          read -ra args <<<"$INIT_ARGS"
+          terragrunt run --all --non-interactive init ${args[0]:+-- "${args[@]}"}
+        env:
+          INIT_ARGS: ${{ inputs.init_args }}
+      - if: ${{ !cancelled() && steps.init.outcome == 'success' }}
+        run: |
+          read -ra args <<<"$PLAN_ARGS"
+          rc=0
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            terragrunt run --all --working-dir "$dir" --parallelism "$PARALLELISM" --non-interactive plan ${args[0]:+-- "${args[@]}"} || rc=1
+          done <<<"$ENVIRONMENTS_DIR"
+          exit $rc
+        env:
+          PLAN_ARGS: ${{ inputs.plan_args }}
+          PARALLELISM: ${{ inputs.parallelism }}
+          ENVIRONMENTS_DIR: ${{ inputs.environments_dir }}
