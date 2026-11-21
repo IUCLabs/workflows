@@ -10,7 +10,7 @@ lint:
 	go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
 	uvx zizmor@$(ZIZMOR_VERSION) .github/
 
-# The self-tests are the reusable-workflow jobs in ci.yml.
+# The self-tests are the reusable-workflow jobs in self-test.yml.
 test:
 	@if command -v act >/dev/null 2>&1; then act pull_request; else echo "act not installed; CI runs the self-tests"; fi
 

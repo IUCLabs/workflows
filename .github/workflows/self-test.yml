@@ -1,4 +1,4 @@
-name: ci
+name: self-test
 
 on:
   pull_request:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: self-test-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -41,14 +41,47 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-  pre-commit-workflow:
+  ci:
     uses: ./.github/workflows/pre-commit.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
     with:
       working_directory: testdata/pre-commit
       python_version: "3.13"
       go_version_file: testdata/go-mod/go.mod
 
-  go-ci:
+  ci-prek:
+    uses: ./.github/workflows/pre-commit.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    with:
+      tool: prek
+      working_directory: testdata/pre-commit
+      go_version_file: testdata/go-mod/go.mod
+
+  actions:
+    uses: ./.github/workflows/actions.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    with:
+      working_directory: testdata/actions/good
+      min_severity: informational
+
+  actions-rejects-bad:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+      - run: |
+          if go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 testdata/actions/bad/workflow.yml > out.txt; then
+            echo "actionlint passed a workflow it must reject" >&2; exit 1
+          fi
+          cat out.txt
+          grep -q 'no_such_property' out.txt
+          grep -q 'SC2086' out.txt
+
+  go:
     uses: ./.github/workflows/go-ci.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
     permissions:
       contents: read

@@ -5,7 +5,8 @@ action is pinned by commit SHA; Dependabot bumps them weekly.
 
 | Workflow | What it does |
 |---|---|
-| `pre-commit.yml` | `uvx pre-commit run --all-files` |
+| `pre-commit.yml` | `uvx pre-commit run --all-files`, or [prek](https://github.com/j178/prek) |
+| `actions.yml` | `lint` (actionlint, with shellcheck on `run:` blocks) and `audit` (zizmor) |
 | `go-ci.yml` | `lint` (go vet, optional golangci-lint), `test` (optional coverage gate) and `build` jobs |
 | `release-vault-plugin.yml` | goreleaser release: RPMs, raw binary, checksums signed via the Vault gpg engine, and the `ghcr.io/iuclabs/<repo>:<tag>` plugin image |
 | `release-terraform-provider.yml` | goreleaser release, then PUTs the linux_amd64 zip to the artifactapi `terraform-unkin` registry |
@@ -20,6 +21,18 @@ push fills and publishes it.
 Every workflow takes a `runs_on` string input (runner label) used by all of its
 jobs: `ubuntu-latest` for CI workflows, `iuclabs-release` for release ones.
 
+## Caller job ids
+
+Checks from a reusable workflow render as `<caller job id> / <callee job id>`.
+Use these caller job ids so every repo reports the same names; those names are
+what branch protection requires.
+
+| Caller job id | Uses | Checks rendered |
+|---|---|---|
+| `ci` | `pre-commit.yml` | `ci / pre-commit` |
+| `actions` | `actions.yml` | `actions / lint`, `actions / audit` |
+| `go` | `go-ci.yml` | `go / lint`, `go / test`, `go / build` |
+
 ## Inputs
 
 ### pre-commit.yml
@@ -28,10 +41,24 @@ Permissions: `contents: read`.
 
 | Input | Type | Default | Description |
 |---|---|---|---|
+| `tool` | string | `pre-commit` | `pre-commit` or `prek`, run via `uvx`; prek treats `working_directory` as its project root |
 | `runs_on` | string | `ubuntu-latest` | Runner label |
 | `working_directory` | string | `.` | Directory holding `.pre-commit-config.yaml`; hooks still see every file in the repo |
 | `python_version` | string | `""` | Python for uv to run pre-commit with; empty uses uv's default |
 | `go_version_file` | string | `""` | go.mod or `.go-version` path from the repo root, for hooks that need Go; empty skips setup-go |
+
+### actions.yml
+
+Permissions: `contents: read`. actionlint v1.7.12 and zizmor 1.32.0 are pinned;
+`lint` fails if shellcheck is not on the runner. zizmor reports as annotations,
+so no `security-events: write`.
+
+| Input | Type | Default | Description |
+|---|---|---|---|
+| `runs_on` | string | `ubuntu-latest` | Runner label |
+| `working_directory` | string | `.` | Directory holding the `.github/` to check |
+| `min_severity` | string | `low` | Lowest zizmor severity that fails: `unknown`, `informational`, `low`, `medium`, `high` |
+| `zizmor_config` | string | `""` | zizmor config path relative to `working_directory`; empty uses zizmor's discovery |
 
 ### go-ci.yml
 
@@ -117,13 +144,17 @@ jobs:
 ```yaml
 # .github/workflows/ci.yml, dry-running the release config on every PR
 jobs:
-  pre-commit:
+  ci:
     uses: IUCLabs/workflows/.github/workflows/pre-commit.yml@v0.1.0
     permissions:
       contents: read
     with:
       go_version_file: go.mod
-  go-ci:
+  actions:
+    uses: IUCLabs/workflows/.github/workflows/actions.yml@v0.1.0
+    permissions:
+      contents: read
+  go:
     uses: IUCLabs/workflows/.github/workflows/go-ci.yml@v0.1.0
     permissions:
       contents: read
@@ -139,12 +170,12 @@ jobs:
       runs_on: ubuntu-latest
 ```
 
-Jobs run through a reusable workflow report as `<caller job> / <job>` (for
-example `pre-commit / pre-commit` and `go-ci / lint`), so update required
-status checks when switching.
+Switching a repo to these workflows renames its checks, so update its required
+status checks to the names above.
 
 ## Development
 
 `make pre-commit`, `make lint` (actionlint and zizmor) and `make test` (runs
-`act` when installed). CI self-tests every workflow against `testdata/` with
-snapshot and no-push modes. Releases: `make patch|minor|major`.
+`act` when installed). `self-test.yml` runs every workflow against `testdata/`
+with snapshot and no-push modes, and checks actionlint rejects
+`testdata/actions/bad/`. Its own required checks are `pre-commit` and `lint`. Releases: `make patch|minor|major`.

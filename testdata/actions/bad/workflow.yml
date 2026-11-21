@@ -1,0 +1,14 @@
+# actionlint must reject this: an undefined context property and an unquoted variable (SC2086).
+name: bad
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  broken:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ${{ github.no_such_property }}
+      - run: echo $HOME
