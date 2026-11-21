@@ -1,0 +1,137 @@
+# Go pre-commit, lint, test and build. Callers need only `contents: read`.
+name: go-ci
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: Directory holding go.mod; pre-commit always runs at the repo root.
+        type: string
+        default: .
+      go_vet:
+        description: Run `go vet ./...` in the lint job.
+        type: boolean
+        default: true
+      golangci_lint_version:
+        description: golangci-lint version to run in the lint job; empty skips it.
+        type: string
+        default: ""
+      golangci_lint_only_new_issues:
+        description: Report only golangci-lint issues introduced by the change.
+        type: boolean
+        default: false
+      test_args:
+        description: Arguments to `go test`.
+        type: string
+        default: -count=1 ./...
+      cover_min:
+        description: Minimum total coverage percent; 0 disables the gate.
+        type: number
+        default: 0
+      cover_exclude:
+        description: Extended regex of coverage profile lines left out of the gate.
+        type: string
+        default: ""
+      strip:
+        description: Build with -trimpath -ldflags="-s -w".
+        type: boolean
+        default: true
+
+permissions: {}
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: ${{ inputs.working_directory }}/go.mod
+          cache-dependency-path: ${{ inputs.working_directory }}/go.sum
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uvx pre-commit run --all-files --show-diff-on-failure
+
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: ${{ inputs.working_directory }}/go.mod
+          cache-dependency-path: ${{ inputs.working_directory }}/go.sum
+      - if: inputs.go_vet
+        run: go vet ./...
+      - if: inputs.golangci_lint_version != ''
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ inputs.golangci_lint_version }}
+          only-new-issues: ${{ inputs.golangci_lint_only_new_issues }}
+          working-directory: ${{ inputs.working_directory }}
+
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: ${{ inputs.working_directory }}/go.mod
+          cache-dependency-path: ${{ inputs.working_directory }}/go.sum
+      # runner image has no C toolchain, so no -race
+      - name: go test
+        run: |
+          read -ra args <<<"${TEST_ARGS}"
+          if [ "${COVER_MIN}" != 0 ]; then args=(-coverprofile=cover.out "${args[@]}"); fi
+          go test "${args[@]}"
+        env:
+          TEST_ARGS: ${{ inputs.test_args }}
+          COVER_MIN: ${{ inputs.cover_min }}
+      - name: coverage gate
+        if: inputs.cover_min != 0
+        run: |
+          if [ -n "${COVER_EXCLUDE}" ]; then grep -Ev "${COVER_EXCLUDE}" cover.out > cover.filtered.out; else cp cover.out cover.filtered.out; fi
+          go tool cover -func=cover.filtered.out | awk -v min="${COVER_MIN}" '
+            /^total:/ { seen = 1; pct = $3; sub(/%/, "", pct);
+              printf "total coverage: %s%% (minimum %d%%)\n", pct, min;
+              if (pct + 0 < min + 0) { print "coverage below minimum" > "/dev/stderr"; exit 1 } }
+            END { if (!seen) { print "no total in coverage output" > "/dev/stderr"; exit 1 } }'
+        env:
+          COVER_MIN: ${{ inputs.cover_min }}
+          COVER_EXCLUDE: ${{ inputs.cover_exclude }}
+
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: ${{ inputs.working_directory }}/go.mod
+          cache-dependency-path: ${{ inputs.working_directory }}/go.sum
+      - if: inputs.strip
+        run: go build -trimpath -ldflags="-s -w" ./...
+      - if: ${{ !inputs.strip }}
+        run: go build ./...

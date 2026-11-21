@@ -1,0 +1,63 @@
+# ko build of a Go service image to ghcr.io/iuclabs/<repo>:<tag>, then moves `latest`. Callers grant `packages: write` (`contents: read` when push is false).
+name: release-go-image
+
+on:
+  workflow_call:
+    inputs:
+      main:
+        description: Main package to build; defaults to ./cmd/<repo>.
+        type: string
+        default: ""
+      push:
+        description: Push the image and move `latest`; false only builds it.
+        type: boolean
+        default: true
+      runs_on:
+        description: Runner label.
+        type: string
+        default: iuclabs-release
+      working_directory:
+        description: Directory holding go.mod and .ko.yaml.
+        type: string
+        default: .
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ${{ inputs.runs_on }}
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    env:
+      VERSION: ${{ github.ref_name }}
+      MAIN: ${{ inputs.main }}
+      PUSH: ${{ inputs.push }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: ${{ inputs.working_directory }}/go.mod
+          # release artifacts must not be built from a cache a PR run could have written
+          cache: false
+      - run: |
+          go install github.com/google/ko@v0.19.1
+          go install github.com/google/go-containerregistry/cmd/crane@v0.22.1
+          echo "KO_DOCKER_REPO=ghcr.io/${GITHUB_REPOSITORY,,}" >> "${GITHUB_ENV}"
+        env:
+          GOTOOLCHAIN: auto
+      - if: inputs.push
+        run: echo "${GITHUB_TOKEN}" | crane auth login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - run: >-
+          ko build --push="${PUSH}" --bare --sbom=none --platform linux/amd64 --tags "${VERSION//\//-}"
+          --image-label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+          "${MAIN:-./cmd/${GITHUB_REPOSITORY#*/}}"
+      - if: inputs.push
+        run: crane tag "${KO_DOCKER_REPO}:${VERSION}" latest

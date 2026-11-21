@@ -1,0 +1,97 @@
+# goreleaser release of a Terraform provider, then the linux_amd64 zip to the artifactapi terraform-unkin registry. Callers grant `contents: write` and `id-token: write`.
+name: release-terraform-provider
+
+on:
+  workflow_call:
+    inputs:
+      namespace:
+        description: Provider namespace in the artifactapi terraform-unkin registry.
+        type: string
+        default: unkin
+      vault_role:
+        description: Role on the jwt/github/iuclabs Vault auth mount.
+        type: string
+        default: release
+      snapshot:
+        description: Build everything without Vault, signing, publishing or the artifactapi upload.
+        type: boolean
+        default: false
+      runs_on:
+        description: Runner label.
+        type: string
+        default: iuclabs-release
+      working_directory:
+        description: Directory holding .goreleaser.yml.
+        type: string
+        default: .
+    outputs:
+      artifacts:
+        description: goreleaser dist/artifacts.json.
+        value: ${{ jobs.release.outputs.artifacts }}
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ${{ inputs.runs_on }}
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      VAULT_ADDR: https://vault.service.consul:8200
+      ARTIFACTAPI: https://artifactapi.k8s.syd1.au.unkin.net
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    outputs:
+      artifacts: ${{ steps.goreleaser.outputs.artifacts }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: ${{ inputs.working_directory }}/go.mod
+          # release artifacts must not be built from a cache a PR run could have written
+          cache: false
+      - if: ${{ !inputs.snapshot }}
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          path: jwt/github/iuclabs
+          role: ${{ inputs.vault_role }}
+          jwtGithubAudience: ${{ env.VAULT_ADDR }}
+          exportToken: true
+      - id: goreleaser
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.20.2
+          args: ${{ inputs.snapshot && 'release --snapshot --clean --skip=publish,sign' || 'release --clean' }}
+          workdir: ${{ inputs.working_directory }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      # fresh login: vault tokens live 15m and the build may eat most of the first one
+      - if: ${{ !inputs.snapshot }}
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          path: jwt/github/iuclabs
+          role: ${{ inputs.vault_role }}
+          jwtGithubAudience: ${{ env.VAULT_ADDR }}
+          secrets: |
+            identity/oidc/token/artifactapi-writer token | ARTIFACTAPI_TOKEN
+      - name: Upload linux_amd64 to artifactapi
+        if: ${{ !inputs.snapshot }}
+        run: |
+          name="${GITHUB_REPOSITORY#*/}"
+          file="${name}_${GITHUB_REF_NAME#v}_linux_amd64.zip"
+          curl -sSf --cacert /etc/vault-ca/ca.crt -X PUT \
+            -H "Authorization: Bearer ${ARTIFACTAPI_TOKEN}" -H "Content-Type: application/zip" \
+            --data-binary "@dist/${file}" \
+            "${ARTIFACTAPI}/api/v2/remotes/terraform-unkin/files/${NAMESPACE}/${name#terraform-provider-}/${file}"
+        env:
+          NAMESPACE: ${{ inputs.namespace }}

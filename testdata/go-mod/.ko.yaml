@@ -1,0 +1,6 @@
+defaultBaseImage: gcr.io/distroless/static-debian12:nonroot
+builds:
+  - id: go-mod
+    main: ./cmd/go-mod
+    ldflags:
+      - -s -w -X main.version={{.Env.VERSION}}
