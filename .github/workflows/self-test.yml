@@ -273,12 +273,14 @@ jobs:
           yq 'explode(.) | .jobs.plan.steps[] | select(.name == "export env") | .run' "$w" >"$RUNNER_TEMP/export.sh"
           yq 'explode(.) | .jobs.apply.steps[] | select(.name == "export env") | .run' "$w" | diff "$RUNNER_TEMP/export.sh" -
           try() { : >"$RUNNER_TEMP/env.out"; GITHUB_ENV="$RUNNER_TEMP/env.out" ENV_INPUT="$1" TF_ENV_SECRET="$2" bash -e "$RUNNER_TEMP/export.sh" >/dev/null; }
-          for bad in 'lower=1' 'PATH=/x' 'GITHUB_X=1' 'NODE_OPTIONS=--x' 'HTTPS_PROXY=http://x' 'NOEQUALS'; do
+          for bad in 'lower=1' '1BAD=x' 'A-B=1' 'TF_VAR_a-b=1' 'NOEQUALS'; do
             if try "$bad" ""; then echo "::error::export env accepted '$bad'"; exit 1; fi
             echo "rejected: $bad"
           done
-          if try "" 'VAULT_TOKEN=x'; then echo "::error::tf_env accepted VAULT_TOKEN"; exit 1; fi
-          echo "rejected tf_env: VAULT_TOKEN=x"
+          if try "" 'lower=x'; then echo "::error::tf_env accepted lower=x"; exit 1; fi
+          echo "rejected tf_env: lower=x"
+          if try "" 'NOEQUALS'; then echo "::error::tf_env accepted a line without ="; exit 1; fi
+          echo "rejected tf_env: NOEQUALS"
           try 'TF_VAR_greeting=hi' 'TF_VAR_secret=s3cret'
           grep -qx 'TF_VAR_greeting=hi' "$RUNNER_TEMP/env.out"
           grep -qx 'TF_VAR_secret=s3cret' "$RUNNER_TEMP/env.out"

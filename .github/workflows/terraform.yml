@@ -180,12 +180,7 @@ jobs:
               [ -z "${line//[[:space:]]/}" ] && continue
               key=${line%%=*}
               if [ "$key" = "$line" ]; then echo "::error::$1 line $n has no '='"; exit 1; fi
-              if ! [[ $key =~ ^[A-Z_][A-Z0-9_]*$ || $key =~ ^TF_VAR_[A-Za-z0-9_]+$ ]]; then echo "::error::$1 line $n: key must match ^[A-Z_][A-Z0-9_]*\$ or be TF_VAR_<name>"; exit 1; fi
-              case "$key" in
-                TF_VAR_*) ;;
-                GITHUB_* | RUNNER_* | ACTIONS_* | PATH | LD_* | BASH_ENV | NODE_* | *_PROXY | *_proxy | SSL_CERT_* | CA_BUNDLE | CURL_CA_BUNDLE | REQUESTS_CA_BUNDLE | VAULT_* | GIT_* | HOME | TF_CLI_CONFIG_FILE | TF_PLUGIN_CACHE_DIR | TG_TF_PATH | TERRAGRUNT_TFPATH)
-                  echo "::error::$1 line $n: $key may not be set"; exit 1 ;;
-              esac
+              if ! [[ $key =~ ^[A-Z_][A-Z0-9_]*$ || $key =~ ^TF_VAR_[A-Za-z0-9_]+$ ]]; then echo "::error::$1 line $n: key must match ^[A-Z_][A-Z0-9_]*\$ or TF_VAR_<name>"; exit 1; fi
               if [ "$1" = tf_env ]; then echo "::add-mask::${line#*=}"; fi
               printf '%s=%s\n' "$key" "${line#*=}" >>"$GITHUB_ENV"
             done <<<"$2"

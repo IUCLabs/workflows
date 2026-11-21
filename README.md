@@ -112,7 +112,7 @@ queued, and a newer queued run replaces an older one. On a run that applies, `fm
 | `vault_role` / `apply_vault_role` | string | `""` | Plan / apply Vault role; empty skips the login |
 | `vault_secrets` / `apply_vault_secrets` | string | `""` | Plan / apply `hashicorp/vault-action` `secrets` mapping |
 | `reachability_urls` | string | `""` | Plan only: newline-separated literal URLs (not expanded, so write the full URL, e.g. `https://vault.service.consul:8200/v1/sys/health`) that must answer with any HTTP status before planning |
-| `env` | string | `""` | Newline-separated `KEY=value` exported before terragrunt; keys match `^[A-Z_][A-Z0-9_]*$` or `TF_VAR_<name>`, and `GITHUB_*`, `RUNNER_*`, `ACTIONS_*`, `PATH`, `LD_*`, `BASH_ENV`, `NODE_*`, `*_PROXY`, `SSL_CERT_*`, `CA_BUNDLE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `VAULT_*`, `GIT_*`, `HOME`, `TF_CLI_CONFIG_FILE`, `TF_PLUGIN_CACHE_DIR`, `TG_TF_PATH`, `TERRAGRUNT_TFPATH` are rejected |
+| `env` | string | `""` | Newline-separated `KEY=value` exported before terragrunt; keys match `^[A-Z_][A-Z0-9_]*$` or `TF_VAR_<name>`; each line needs `=`, else the run fails |
 
 Secret `tf_env` takes the same `KEY=value` lines, masked, and reaches only
 `plan` and `apply`; with `secrets: inherit` a repo or org secret named `TF_ENV`
