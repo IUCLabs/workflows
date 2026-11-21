@@ -35,7 +35,7 @@ Permissions: `contents: read`.
 
 ### go-ci.yml
 
-Permissions: `contents: read`.
+Permissions: `contents: read`, `pull-requests: read` (lint only-new-issues).
 
 | Input | Type | Default | Description |
 |---|---|---|---|
@@ -127,6 +127,7 @@ jobs:
     uses: IUCLabs/workflows/.github/workflows/go-ci.yml@v0.1.0
     permissions:
       contents: read
+      pull-requests: read
   release-snapshot:
     uses: IUCLabs/workflows/.github/workflows/release-vault-plugin.yml@v0.1.0
     permissions:
