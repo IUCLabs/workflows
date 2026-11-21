@@ -1,0 +1,82 @@
+# actionlint and zizmor over a repo's workflows. Callers need only `contents: read`.
+name: actions
+
+on:
+  workflow_call:
+    inputs:
+      runs_on:
+        description: Runner label.
+        type: string
+        default: ubuntu-latest
+      working_directory:
+        description: Directory holding the .github/ to check.
+        type: string
+        default: .
+      min_severity:
+        description: Lowest zizmor finding severity that fails the audit (unknown, informational, low, medium, high).
+        type: string
+        default: low
+      zizmor_config:
+        description: zizmor config path relative to working_directory; empty uses zizmor's own discovery.
+        type: string
+        default: ""
+
+permissions: {}
+
+env:
+  ACTIONLINT_VERSION: v1.7.12
+  ZIZMOR_VERSION: 1.32.0
+
+jobs:
+  lint:
+    runs-on: ${{ inputs.runs_on }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+      # actionlint silently skips run: blocks without shellcheck
+      - run: command -v shellcheck
+      # actionlint keys its project on the git root, so name working_directory's files and config explicitly
+      - run: |
+          shopt -s nullglob
+          args=(.github/workflows/*.yml .github/workflows/*.yaml)
+          if [ "${#args[@]}" -eq 0 ]; then echo "no workflows under ${PWD}/.github/workflows" >&2; exit 1; fi
+          for c in .github/actionlint.yaml .github/actionlint.yml; do
+            if [ -f "$c" ]; then args=(-config-file "$c" "${args[@]}"); break; fi
+          done
+          go run "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}" "${args[@]}"
+
+  audit:
+    runs-on: ${{ inputs.runs_on }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: |
+          case "${SEVERITY}" in
+            unknown|informational|low|medium|high) ;;
+            *) echo "min_severity must be unknown, informational, low, medium or high, got '${SEVERITY}'" >&2; exit 1 ;;
+          esac
+          args=(--format=github "--min-severity=${SEVERITY}")
+          if [ -n "${CONFIG_PATH}" ]; then args+=(--config "${CONFIG_PATH}"); fi
+          uvx "zizmor@${ZIZMOR_VERSION}" "${args[@]}" .
+        env:
+          SEVERITY: ${{ inputs.min_severity }}
+          # not ZIZMOR_CONFIG: zizmor reads that as --config
+          CONFIG_PATH: ${{ inputs.zizmor_config }}
+          GH_TOKEN: ${{ github.token }}

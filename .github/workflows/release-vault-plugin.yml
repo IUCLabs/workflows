@@ -1,0 +1,75 @@
+# goreleaser release of a Vault/OpenBao plugin: RPMs, raw binary, Vault-GPG-signed checksums and the ghcr plugin image. Callers grant `contents: write`, `id-token: write` and `packages: write`.
+name: release-vault-plugin
+
+on:
+  workflow_call:
+    inputs:
+      vault_role:
+        description: Role on the jwt/github/iuclabs Vault auth mount.
+        type: string
+        default: release
+      snapshot:
+        description: Build everything without Vault, signing or publishing.
+        type: boolean
+        default: false
+      runs_on:
+        description: Runner label.
+        type: string
+        default: iuclabs-release
+      working_directory:
+        description: Directory holding .goreleaser.yml.
+        type: string
+        default: .
+    outputs:
+      artifacts:
+        description: goreleaser dist/artifacts.json.
+        value: ${{ jobs.release.outputs.artifacts }}
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ${{ inputs.runs_on }}
+    permissions:
+      contents: write
+      id-token: write
+      packages: write
+    env:
+      VAULT_ADDR: https://vault.service.consul:8200
+    outputs:
+      artifacts: ${{ steps.goreleaser.outputs.artifacts }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: ${{ inputs.working_directory }}/go.mod
+          # release artifacts must not be built from a cache a PR run could have written
+          cache: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - if: ${{ !inputs.snapshot }}
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - if: ${{ !inputs.snapshot }}
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          path: jwt/github/iuclabs
+          role: ${{ inputs.vault_role }}
+          jwtGithubAudience: ${{ env.VAULT_ADDR }}
+          exportToken: true
+      - id: goreleaser
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.20.2
+          args: ${{ inputs.snapshot && 'release --snapshot --clean --skip=publish,sign' || 'release --clean' }}
+          workdir: ${{ inputs.working_directory }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

@@ -1,0 +1,54 @@
+version: 2
+project_name: vault-plugin-fixture
+
+builds:
+  - main: ./cmd/vault-plugin-fixture
+    env:
+      - CGO_ENABLED=0
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Tag }}
+    goos: [linux]
+    goarch: [amd64]
+
+archives:
+  - formats: [none]
+
+nfpms:
+  - &rpm
+    id: vault
+    package_name: vault-plugin-fixture
+    bindir: /usr/libexec/vault-plugins
+    formats: [rpm]
+    file_name_template: "{{ .ConventionalFileName }}"
+    release: "1"
+    description: Fixture for the release-vault-plugin workflow self-test
+    maintainer: IUCLabs
+    license: MIT
+  - <<: *rpm
+    id: openbao
+    package_name: openbao-plugin-fixture
+    bindir: /usr/libexec/openbao-plugins
+
+dockers_v2:
+  - images: ["ghcr.io/iuclabs/{{ .ProjectName }}"]
+    tags: ["{{ .Tag }}"]
+    platforms: [linux/amd64]
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
+  algorithm: sha256
+
+signs:
+  - artifacts: checksum
+    cmd: scripts/sign.sh
+    args: ["${artifact}", "${signature}"]
+
+release:
+  use_existing_draft: true
+  mode: keep-existing
+
+changelog:
+  disable: true

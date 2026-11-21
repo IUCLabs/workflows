@@ -1,0 +1,155 @@
+name: self-test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uvx pre-commit run --all-files --show-diff-on-failure
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      # shellcheck is preinstalled on the runner, so actionlint also lints run: blocks
+      - name: actionlint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: zizmor
+        run: uvx zizmor@1.32.0 --format=github .github/
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  ci:
+    uses: ./.github/workflows/pre-commit.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    with:
+      working_directory: testdata/pre-commit
+      python_version: "3.13"
+      go_version_file: testdata/go-mod/go.mod
+
+  ci-prek:
+    uses: ./.github/workflows/pre-commit.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    with:
+      tool: prek
+      working_directory: testdata/pre-commit
+      go_version_file: testdata/go-mod/go.mod
+
+  actions:
+    uses: ./.github/workflows/actions.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    with:
+      working_directory: testdata/actions/good
+      min_severity: informational
+      zizmor_config: ../../../zizmor.yml
+
+  actions-rejects-bad:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+      - run: |
+          if go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 testdata/actions/bad/workflow.yml > out.txt; then
+            echo "actionlint passed a workflow it must reject" >&2; exit 1
+          fi
+          cat out.txt
+          grep -q 'no_such_property' out.txt
+          grep -q 'SC2086' out.txt
+
+  go:
+    uses: ./.github/workflows/go-ci.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      working_directory: testdata/go-mod
+      golangci_lint_version: v2.15.0
+      cover_min: 90
+      cover_exclude: /cmd/
+
+  release-vault-plugin:
+    uses: ./.github/workflows/release-vault-plugin.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
+    # the called job declares release permissions; snapshot mode uses none of them
+    permissions:
+      contents: write
+      id-token: write
+      packages: write
+    with:
+      snapshot: true
+      runs_on: ubuntu-latest
+      working_directory: testdata/vault-plugin
+
+  assert-vault-plugin:
+    needs: release-vault-plugin
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - run: |
+          jq -e 'any(.[]; .type == "Binary" and .name == "vault-plugin-fixture")' <<<"${ARTIFACTS}"
+          jq -e '[.[] | select(.type == "Linux Package" and (.name | endswith(".rpm")))] | length == 2' <<<"${ARTIFACTS}"
+          jq -e 'any(.[]; .type == "Docker Image" and (.name | startswith("ghcr.io/iuclabs/vault-plugin-fixture:")))' <<<"${ARTIFACTS}"
+        env:
+          ARTIFACTS: ${{ needs.release-vault-plugin.outputs.artifacts }}
+
+  release-terraform-provider:
+    uses: ./.github/workflows/release-terraform-provider.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
+    # the called job declares release permissions; snapshot mode uses none of them
+    permissions:
+      contents: write
+      id-token: write
+    with:
+      snapshot: true
+      runs_on: ubuntu-latest
+      working_directory: testdata/terraform-provider
+
+  assert-terraform-provider:
+    needs: release-terraform-provider
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - run: |
+          jq -e 'any(.[]; .type == "Archive" and (.name | test("^terraform-provider-fixture_.*_linux_amd64\\.zip$")))' <<<"${ARTIFACTS}"
+          jq -e 'any(.[]; .type == "Checksum")' <<<"${ARTIFACTS}"
+        env:
+          ARTIFACTS: ${{ needs.release-terraform-provider.outputs.artifacts }}
+
+  release-go-image:
+    uses: ./.github/workflows/release-go-image.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
+    # the called job declares packages: write for the push; push: false uses none of it
+    permissions:
+      contents: read
+      packages: write
+    with:
+      main: ./cmd/go-mod
+      push: false
+      runs_on: ubuntu-latest
+      working_directory: testdata/go-mod

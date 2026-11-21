@@ -1,0 +1,57 @@
+# `uvx pre-commit run --all-files`, or prek. Callers need only `contents: read`.
+name: pre-commit
+
+on:
+  workflow_call:
+    inputs:
+      tool:
+        description: Hook runner, `pre-commit` or `prek` (https://github.com/j178/prek, run via `uvx prek`).
+        type: string
+        default: pre-commit
+      runs_on:
+        description: Runner label.
+        type: string
+        default: ubuntu-latest
+      working_directory:
+        description: Directory holding .pre-commit-config.yaml; hooks still see every file in the repo.
+        type: string
+        default: .
+      python_version:
+        description: Python for uv to run pre-commit with; empty uses uv's default.
+        type: string
+        default: ""
+      go_version_file:
+        description: go.mod or .go-version path from the repo root, for hooks that need Go; empty skips setup-go.
+        type: string
+        default: ""
+
+permissions: {}
+
+jobs:
+  pre-commit:
+    runs-on: ${{ inputs.runs_on }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: inputs.go_version_file != ''
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: ${{ inputs.go_version_file }}
+          cache: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ inputs.python_version }}
+      - run: |
+          case "${TOOL}" in
+            pre-commit|prek) ;;
+            *) echo "tool must be pre-commit or prek, got '${TOOL}'" >&2; exit 1 ;;
+          esac
+          uvx "${TOOL}" run --all-files --show-diff-on-failure
+        env:
+          TOOL: ${{ inputs.tool }}
