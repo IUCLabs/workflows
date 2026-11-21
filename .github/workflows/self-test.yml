@@ -285,3 +285,32 @@ jobs:
           grep -qx 'TF_VAR_greeting=hi' "$RUNNER_TEMP/env.out"
           grep -qx 'TF_VAR_secret=s3cret' "$RUNNER_TEMP/env.out"
           echo "accepted: TF_VAR_greeting=hi, tf_env TF_VAR_secret"
+
+  terraform-download-base-rejects-bad:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: |
+          yq 'explode(.) | .jobs.fmt.steps[] | select(.name == "install tofu, terragrunt and tflint") | .run' .github/workflows/terraform.yml >"$RUNNER_TEMP/setup.sh"
+          # stub curl logs the URL and fails, so nothing is downloaded
+          mkdir -p "$RUNNER_TEMP/stub"
+          printf '#!/bin/sh\nfor a; do u=$a; done\necho "$u" >>"$CURL_LOG"\nexit 1\n' >"$RUNNER_TEMP/stub/curl"
+          chmod +x "$RUNNER_TEMP/stub/curl"
+          export CURL_LOG="$RUNNER_TEMP/curl.log" TOFU_VERSION=1.2.3
+          try() { : >"$CURL_LOG"; PATH="$RUNNER_TEMP/stub:$PATH" DOWNLOAD_BASE="$1" CA_FILE="" GITHUB_ENV=/dev/null GITHUB_PATH=/dev/null bash -e "$RUNNER_TEMP/setup.sh" 2>&1; }
+          for bad in '' 'http://github.com' 'https://github.com/' 'github.com' 'https://' 'https://a.example/x/' 'https://a b.example' 'https://a.example?x=1'; do
+            out=$(try "$bad") && { echo "::error::setup accepted download_base '$bad'"; exit 1; }
+            grep -q 'download_base must be' <<<"$out" || { echo "::error::'$bad' failed for another reason: $out"; exit 1; }
+            [ ! -s "$CURL_LOG" ]
+            echo "rejected: '$bad'"
+          done
+          for good in https://github.com https://artifactapi.k8s.syd1.au.unkin.net/api/v1/remote/github; do
+            out=$(try "$good") || true
+            if grep -q 'download_base must be' <<<"$out"; then echo "::error::setup rejected '$good'"; exit 1; fi
+            grep -qx "$good/opentofu/opentofu/releases/download/v1.2.3/tofu_1.2.3_linux_amd64.tar.gz" "$CURL_LOG"
+            echo "accepted: $good"
+          done

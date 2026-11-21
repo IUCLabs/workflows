@@ -52,6 +52,10 @@ on:
         description: Also run fmt, tflint, validate and plan on a run that applies.
         type: boolean
         default: false
+      download_base:
+        description: Base URL that `<owner>/<repo>/releases/download/<tag>/<file>` is appended to for tofu, terragrunt and tflint; https, no trailing slash.
+        type: string
+        default: https://github.com
       tofu_version:
         description: OpenTofu version.
         type: string
@@ -144,25 +148,28 @@ jobs:
       - &setup
         name: install tofu, terragrunt and tflint
         run: |
+          re='^https://[^/?#[:space:]]+(/[^?#[:space:]]*[^/?#[:space:]])?$'
+          if ! [[ $DOWNLOAD_BASE =~ $re ]]; then echo "::error::download_base must be an https:// URL with no trailing slash, got '$DOWNLOAD_BASE'"; exit 1; fi
           bin="$RUNNER_TEMP/bin"
           dl="$RUNNER_TEMP/dl"
           mkdir -p "$bin" "$dl"
-          fetch() {
-            curl -fsSL --retry 3 -o "$dl/$1" "$2"
-            echo "$3  $dl/$1" | sha256sum -c -
-          }
-          fetch tofu.tar.gz "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.tar.gz" "$TOFU_SHA256"
-          tar -xzf "$dl/tofu.tar.gz" -C "$bin" tofu
-          fetch terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_amd64" "$TERRAGRUNT_SHA256"
-          install -m0755 "$dl/terragrunt" "$bin/terragrunt"
-          fetch tflint.zip "https://github.com/terraform-linters/tflint/releases/download/v${TFLINT_VERSION}/tflint_linux_amd64.zip" "$TFLINT_SHA256"
-          unzip -qo "$dl/tflint.zip" tflint -d "$bin"
-          echo "$bin" >>"$GITHUB_PATH"
           if [ -n "$CA_FILE" ]; then
             cat /etc/ssl/certs/ca-certificates.crt "$CA_FILE" >"$RUNNER_TEMP/ca-bundle.crt"
             for v in CA_BUNDLE VAULT_CACERT SSL_CERT_FILE; do echo "$v=$RUNNER_TEMP/ca-bundle.crt" >>"$GITHUB_ENV"; done
           fi
+          fetch() {
+            curl -fsSL --retry 3 ${CA_FILE:+--cacert "$RUNNER_TEMP/ca-bundle.crt"} -o "$dl/$1" "$2"
+            echo "$3  $dl/$1" | sha256sum -c -
+          }
+          fetch tofu.tar.gz "$DOWNLOAD_BASE/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.tar.gz" "$TOFU_SHA256"
+          tar -xzf "$dl/tofu.tar.gz" -C "$bin" tofu
+          fetch terragrunt "$DOWNLOAD_BASE/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_amd64" "$TERRAGRUNT_SHA256"
+          install -m0755 "$dl/terragrunt" "$bin/terragrunt"
+          fetch tflint.zip "$DOWNLOAD_BASE/terraform-linters/tflint/releases/download/v${TFLINT_VERSION}/tflint_linux_amd64.zip" "$TFLINT_SHA256"
+          unzip -qo "$dl/tflint.zip" tflint -d "$bin"
+          echo "$bin" >>"$GITHUB_PATH"
         env:
+          DOWNLOAD_BASE: ${{ inputs.download_base }}
           TOFU_VERSION: ${{ inputs.tofu_version }}
           TOFU_SHA256: ${{ inputs.tofu_sha256 }}
           TERRAGRUNT_VERSION: ${{ inputs.terragrunt_version }}
