@@ -127,6 +127,34 @@ jobs:
           CONFIGS: ${{ needs.release-vault-plugin.outputs.image_configs }}
           IMAGE: ${{ needs.release-vault-plugin.outputs.image }}
 
+  release-vault-plugin-no-image:
+    uses: ./.github/workflows/release-vault-plugin.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
+    permissions:
+      contents: write
+      id-token: write
+      packages: write
+    with:
+      snapshot: true
+      image: false
+      runs_on: ubuntu-latest
+      working_directory: testdata/vault-plugin
+
+  assert-vault-plugin-no-image:
+    needs: release-vault-plugin-no-image
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - run: |
+          jq -e 'any(.[]; .type == "Binary" and .name == "vault-plugin-fixture")' <<<"${ARTIFACTS}"
+          jq -e '[.[] | select(.type == "Linux Package" and (.name | endswith(".rpm")))] | length == 2' <<<"${ARTIFACTS}"
+          [ -z "${IMAGE}" ] || { echo "::error::image: false still produced ${IMAGE}"; exit 1; }
+          [ -z "${CONFIGS}" ] || { echo "::error::image: false still produced image_configs"; exit 1; }
+        env:
+          ARTIFACTS: ${{ needs.release-vault-plugin-no-image.outputs.artifacts }}
+          CONFIGS: ${{ needs.release-vault-plugin-no-image.outputs.image_configs }}
+          IMAGE: ${{ needs.release-vault-plugin-no-image.outputs.image }}
+
   release-terraform-provider:
     uses: ./.github/workflows/release-terraform-provider.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
     if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
