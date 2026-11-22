@@ -122,12 +122,14 @@ fills it. Prefer Vault.
 ### release-vault-plugin.yml
 
 Permissions: `contents: write`, `id-token: write`, `packages: write`. Outputs:
-`artifacts` (goreleaser `dist/artifacts.json`) and `image` (`<ref>:<tag>@<digest>`).
+`artifacts` (goreleaser `dist/artifacts.json`), `image` (`<ref>:<tag>@<digest>`)
+and `image_configs` (JSON array of each platform image's config).
 goreleaser runs with `--skip=docker --draft`; crane then pushes
 `ghcr.io/iuclabs/<project_name>:<tag>` and `latest` without a Docker daemon
 (`FROM scratch`, each linux binary at `/<binary>` as the entrypoint, OCI
 source/version/revision labels, one index entry per arch) and only then
 publishes the draft. A caller's `dockers_v2` block and Dockerfile are unused.
+The image ships without an SBOM attestation.
 
 | Input | Type | Default | Description |
 |---|---|---|---|
