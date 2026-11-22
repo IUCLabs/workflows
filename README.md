@@ -131,7 +131,8 @@ source/version/revision labels, one index entry per arch) and only then
 publishes the draft. A caller's `dockers_v2` block and Dockerfile are unused.
 The image ships without an SBOM attestation. With `image: false`, crane, the
 ghcr login and the image step are skipped, the draft is still published, and
-`image` and `image_configs` are empty.
+`image` and `image_configs` are empty. Callers must still grant
+`packages: write`, because the called job declares it statically.
 
 | Input | Type | Default | Description |
 |---|---|---|---|

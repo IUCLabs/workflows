@@ -147,6 +147,7 @@ jobs:
     steps:
       - run: |
           jq -e 'any(.[]; .type == "Binary" and .name == "vault-plugin-fixture")' <<<"${ARTIFACTS}"
+          jq -e '[.[] | select(.type == "Linux Package" and (.name | endswith(".rpm")))] | length == 2' <<<"${ARTIFACTS}"
           [ -z "${IMAGE}" ] || { echo "::error::image: false still produced ${IMAGE}"; exit 1; }
           [ -z "${CONFIGS}" ] || { echo "::error::image: false still produced image_configs"; exit 1; }
         env:
