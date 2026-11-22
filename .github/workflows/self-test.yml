@@ -116,8 +116,15 @@ jobs:
           jq -e '[.[] | select(.type == "Linux Package" and (.name | endswith(".rpm")))] | length == 2' <<<"${ARTIFACTS}"
           echo "image: ${IMAGE}"
           [[ "${IMAGE}" == 127.0.0.1:5000/iuclabs/vault-plugin-fixture:v*@sha256:* ]]
+          jq -e 'length == 1 and all(.[];
+            .config.Entrypoint == ["/vault-plugin-fixture"]
+            and .os == "linux" and .architecture == "amd64"
+            and (.config.Labels["org.opencontainers.image.source"] | endswith("/IUCLabs/workflows"))
+            and (.config.Labels["org.opencontainers.image.version"] | length > 0)
+            and (.config.Labels["org.opencontainers.image.revision"] | test("^[0-9a-f]{40}$")))' <<<"${CONFIGS}"
         env:
           ARTIFACTS: ${{ needs.release-vault-plugin.outputs.artifacts }}
+          CONFIGS: ${{ needs.release-vault-plugin.outputs.image_configs }}
           IMAGE: ${{ needs.release-vault-plugin.outputs.image }}
 
   release-terraform-provider:

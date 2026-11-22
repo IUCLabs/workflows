@@ -27,6 +27,9 @@ on:
       image:
         description: Pushed plugin image as <ref>:<tag>@<digest>; snapshot pushes to a job-local registry.
         value: ${{ jobs.release.outputs.image }}
+      image_configs:
+        description: JSON array of each platform image's config.
+        value: ${{ jobs.release.outputs.image_configs }}
 
 permissions: {}
 
@@ -42,6 +45,7 @@ jobs:
     outputs:
       artifacts: ${{ steps.goreleaser.outputs.artifacts }}
       image: ${{ steps.image.outputs.image }}
+      image_configs: ${{ steps.image.outputs.image_configs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -58,6 +62,8 @@ jobs:
       - if: ${{ !inputs.snapshot }}
         run: echo "${GITHUB_TOKEN}" | crane auth login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
         env:
+          # keep the token out of ~/.docker on long-lived runners
+          DOCKER_CONFIG: ${{ runner.temp }}/docker
           GITHUB_TOKEN: ${{ github.token }}
       - if: ${{ !inputs.snapshot }}
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
@@ -82,23 +88,24 @@ jobs:
         name: build plugin image
         working-directory: ${{ inputs.working_directory }}
         env:
+          DOCKER_CONFIG: ${{ runner.temp }}/docker
           SNAPSHOT: ${{ inputs.snapshot }}
           SOURCE: ${{ github.server_url }}/${{ github.repository }}
         run: |
-          registry=ghcr.io
-          if [ "${SNAPSHOT}" = true ]; then
-            registry=127.0.0.1:5000
-            crane registry serve --address "${registry}" >"${RUNNER_TEMP}/registry.log" 2>&1 &
-            for _ in $(seq 50); do crane catalog "${registry}" >/dev/null 2>&1 && break; sleep 0.1; done
-          fi
-          img="${registry}/iuclabs/$(jq -r .project_name dist/metadata.json)"
+          # assemble in a job-local registry so ghcr only ever sees the finished index
+          registry=127.0.0.1:5000
+          crane registry serve --address "${registry}" >"${RUNNER_TEMP}/registry.log" 2>&1 &
+          for _ in $(seq 50); do crane catalog "${registry}" >/dev/null 2>&1 && break; sleep 0.1; done
+          name=$(jq -r .project_name dist/metadata.json)
           tag=$(jq -r .tag dist/metadata.json)
+          img="${registry}/iuclabs/${name}"
           labels=(
             -l "org.opencontainers.image.source=${SOURCE}"
             -l "org.opencontainers.image.version=$(jq -r .version dist/metadata.json)"
             -l "org.opencontainers.image.revision=$(jq -r .commit dist/metadata.json)"
           )
           manifests=()
+          configs=()
           # FROM scratch with the binary at /<name>, as the plugin ImageVolume subPath expects
           while IFS=$'\t' read -r path arch; do
             bin=$(basename "${path}")
@@ -107,11 +114,18 @@ jobs:
             ref=$(crane mutate "${ref}" --set-platform "linux/${arch}" --entrypoint "/${bin}" "${labels[@]}")
             crane export "${ref}" - | tar -t | grep -qx "${bin}"
             manifests+=(-m "${ref}")
+            configs+=("$(crane config "${ref}")")
           done < <(jq -r '.[] | select(.type == "Binary" and .goos == "linux") | [.path, .goarch] | @tsv' dist/artifacts.json)
           [ "${#manifests[@]}" -gt 0 ] || { echo "::error::no linux binaries in dist/artifacts.json"; exit 1; }
           crane index append "${manifests[@]}" -t "${img}:${tag}"
-          crane tag "${img}:${tag}" latest
-          echo "image=${img}:${tag}@$(crane digest "${img}:${tag}")" >> "${GITHUB_OUTPUT}"
+          out="${img}:${tag}"
+          if [ "${SNAPSHOT}" != true ]; then
+            out="ghcr.io/iuclabs/${name}:${tag}"
+            crane copy "${img}:${tag}" "${out}"
+            crane tag "${out}" latest
+          fi
+          echo "image=${out}@$(crane digest "${out}")" >> "${GITHUB_OUTPUT}"
+          echo "image_configs=$(printf '%s\n' "${configs[@]}" | jq -cs .)" >> "${GITHUB_OUTPUT}"
       - if: ${{ !inputs.snapshot }}
         name: publish release
         env:
