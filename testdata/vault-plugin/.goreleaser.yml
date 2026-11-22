@@ -24,7 +24,7 @@ nfpms:
     formats: [rpm]
     file_name_template: "{{ .ConventionalFileName }}"
     release: "1"
-    description: Fixture for the release-vault-plugin workflow self-test
+    description: Fixture for the release-goreleaser workflow self-test
     maintainer: IUCLabs
     license: MIT
   - <<: *rpm

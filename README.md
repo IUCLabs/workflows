@@ -9,7 +9,8 @@ action is pinned by commit SHA; Dependabot bumps them weekly.
 | `actions.yml` | `lint` (actionlint, with shellcheck on `run:` blocks) and `audit` (zizmor) |
 | `go-ci.yml` | `lint` (go vet, optional golangci-lint), `test` (optional coverage gate) and `build` jobs |
 | `terraform.yml` | `fmt`, `tflint`, `validate`, a lock-free terragrunt `plan`, and `apply` on push to the default branch, queued per repo |
-| `release-vault-plugin.yml` | goreleaser release: RPMs, raw binary, checksums signed via the Vault gpg engine, and (unless `image: false`) the `ghcr.io/iuclabs/<repo>:<tag>` plugin image |
+| `release-goreleaser.yml` | goreleaser release: whatever `.goreleaser.yml` builds (RPMs, raw binaries), checksums signed via the Vault gpg engine, and (unless `image: false`) the `ghcr.io/iuclabs/<repo>:<tag>` image |
+| `release-vault-plugin.yml` | Deprecated, removed in v0.2.0: wrapper that calls `release-goreleaser.yml` |
 | `release-terraform-provider.yml` | goreleaser release, then PUTs the linux_amd64 zip to the artifactapi `terraform-unkin` registry |
 | `release-go-image.yml` | ko build of `ghcr.io/iuclabs/<repo>:<tag>`, then moves `latest` |
 
@@ -119,7 +120,7 @@ Secret `tf_env` takes the same `KEY=value` lines, masked, and reaches only
 `plan` and `apply`; with `secrets: inherit` a repo or org secret named `TF_ENV`
 fills it. Prefer Vault.
 
-### release-vault-plugin.yml
+### release-goreleaser.yml
 
 Permissions: `contents: write`, `id-token: write`, `packages: write`. Outputs:
 `artifacts` (goreleaser `dist/artifacts.json`), `image` (`<ref>:<tag>@<digest>`)
@@ -138,9 +139,18 @@ ghcr login and the image step are skipped, the draft is still published, and
 |---|---|---|---|
 | `vault_role` | string | `release` | Role on the `jwt/github/iuclabs` mount |
 | `snapshot` | boolean | `false` | `goreleaser release --snapshot --clean --skip=publish,sign,docker`; no Vault, image pushed to a job-local registry |
-| `image` | boolean | `true` | Build and push the plugin image; `false` for callers that ship no image |
+| `image` | boolean | `true` | Build and push the image; `false` for callers that ship no image |
 | `runs_on` | string | `iuclabs-release` | Runner label |
 | `working_directory` | string | `.` | Directory holding `.goreleaser.yml` |
+
+### release-vault-plugin.yml (deprecated)
+
+Removed in v0.2.0. It takes the same inputs, needs the same permissions and
+returns the same outputs as `release-goreleaser.yml`, which it calls. Two
+things change for a caller that bumps its pin onto it: the Vault
+`job_workflow_ref` claim names `release-goreleaser.yml`, and checks render
+one level deeper (`release-snapshot / release / release`). Switch to
+`release-goreleaser.yml` instead, which keeps the `<caller> / release` names.
 
 ### release-terraform-provider.yml
 
@@ -187,7 +197,7 @@ permissions: {}
 
 jobs:
   release:
-    uses: IUCLabs/workflows/.github/workflows/release-vault-plugin.yml@v0.1.0
+    uses: IUCLabs/workflows/.github/workflows/release-goreleaser.yml@v0.1.1
     permissions:
       contents: write
       id-token: write
@@ -213,7 +223,7 @@ jobs:
       contents: read
       pull-requests: read
   release-snapshot:
-    uses: IUCLabs/workflows/.github/workflows/release-vault-plugin.yml@v0.1.0
+    uses: IUCLabs/workflows/.github/workflows/release-goreleaser.yml@v0.1.1
     permissions:
       contents: write
       id-token: write
