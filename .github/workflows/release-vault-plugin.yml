@@ -1,4 +1,4 @@
-# goreleaser release of a Vault/OpenBao plugin: RPMs, raw binary and Vault-GPG-signed checksums, then the ghcr plugin image via crane (no Docker daemon). Callers grant `contents: write`, `id-token: write` and `packages: write`.
+# goreleaser release of a Vault/OpenBao plugin: RPMs, raw binary and Vault-GPG-signed checksums, then (unless `image: false`) the ghcr plugin image via crane (no Docker daemon). Callers grant `contents: write`, `id-token: write` and `packages: write`.
 name: release-vault-plugin
 
 on:
@@ -12,6 +12,10 @@ on:
         description: Build everything without Vault, signing or publishing.
         type: boolean
         default: false
+      image:
+        description: Build and push the plugin image; false leaves the image outputs empty.
+        type: boolean
+        default: true
       runs_on:
         description: Runner label.
         type: string
@@ -25,10 +29,10 @@ on:
         description: goreleaser dist/artifacts.json.
         value: ${{ jobs.release.outputs.artifacts }}
       image:
-        description: Pushed plugin image as <ref>:<tag>@<digest>; snapshot pushes to a job-local registry.
+        description: Pushed plugin image as <ref>:<tag>@<digest>; snapshot pushes to a job-local registry; empty when image is false.
         value: ${{ jobs.release.outputs.image }}
       image_configs:
-        description: JSON array of each platform image's config.
+        description: JSON array of each platform image's config; empty when image is false.
         value: ${{ jobs.release.outputs.image_configs }}
 
 permissions: {}
@@ -56,10 +60,11 @@ jobs:
           go-version-file: ${{ inputs.working_directory }}/go.mod
           # release artifacts must not be built from a cache a PR run could have written
           cache: false
-      - run: go install github.com/google/go-containerregistry/cmd/crane@v0.22.1
+      - if: ${{ inputs.image }}
+        run: go install github.com/google/go-containerregistry/cmd/crane@v0.22.1
         env:
           GOTOOLCHAIN: auto
-      - if: ${{ !inputs.snapshot }}
+      - if: ${{ inputs.image && !inputs.snapshot }}
         run: echo "${GITHUB_TOKEN}" | crane auth login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
         env:
           # keep the token out of ~/.docker on long-lived runners
@@ -85,6 +90,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
       - id: image
+        if: ${{ inputs.image }}
         name: build plugin image
         working-directory: ${{ inputs.working_directory }}
         env:

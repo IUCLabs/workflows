@@ -9,7 +9,7 @@ action is pinned by commit SHA; Dependabot bumps them weekly.
 | `actions.yml` | `lint` (actionlint, with shellcheck on `run:` blocks) and `audit` (zizmor) |
 | `go-ci.yml` | `lint` (go vet, optional golangci-lint), `test` (optional coverage gate) and `build` jobs |
 | `terraform.yml` | `fmt`, `tflint`, `validate`, a lock-free terragrunt `plan`, and `apply` on push to the default branch, queued per repo |
-| `release-vault-plugin.yml` | goreleaser release: RPMs, raw binary, checksums signed via the Vault gpg engine, and the `ghcr.io/iuclabs/<repo>:<tag>` plugin image |
+| `release-vault-plugin.yml` | goreleaser release: RPMs, raw binary, checksums signed via the Vault gpg engine, and (unless `image: false`) the `ghcr.io/iuclabs/<repo>:<tag>` plugin image |
 | `release-terraform-provider.yml` | goreleaser release, then PUTs the linux_amd64 zip to the artifactapi `terraform-unkin` registry |
 | `release-go-image.yml` | ko build of `ghcr.io/iuclabs/<repo>:<tag>`, then moves `latest` |
 
@@ -129,12 +129,15 @@ goreleaser runs with `--skip=docker --draft`; crane then pushes
 (`FROM scratch`, each linux binary at `/<binary>` as the entrypoint, OCI
 source/version/revision labels, one index entry per arch) and only then
 publishes the draft. A caller's `dockers_v2` block and Dockerfile are unused.
-The image ships without an SBOM attestation.
+The image ships without an SBOM attestation. With `image: false`, crane, the
+ghcr login and the image step are skipped, the draft is still published, and
+`image` and `image_configs` are empty.
 
 | Input | Type | Default | Description |
 |---|---|---|---|
 | `vault_role` | string | `release` | Role on the `jwt/github/iuclabs` mount |
 | `snapshot` | boolean | `false` | `goreleaser release --snapshot --clean --skip=publish,sign,docker`; no Vault, image pushed to a job-local registry |
+| `image` | boolean | `true` | Build and push the plugin image; `false` for callers that ship no image |
 | `runs_on` | string | `iuclabs-release` | Runner label |
 | `working_directory` | string | `.` | Directory holding `.goreleaser.yml` |
 
