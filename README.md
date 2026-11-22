@@ -121,14 +121,18 @@ fills it. Prefer Vault.
 
 ### release-vault-plugin.yml
 
-Permissions: `contents: write`, `id-token: write`, `packages: write`. Output:
-`artifacts` (goreleaser `dist/artifacts.json`). The image comes from
-`dockers_v2` in the caller's `.goreleaser.yml` (`FROM scratch`, binary only).
+Permissions: `contents: write`, `id-token: write`, `packages: write`. Outputs:
+`artifacts` (goreleaser `dist/artifacts.json`) and `image` (`<ref>:<tag>@<digest>`).
+goreleaser runs with `--skip=docker --draft`; crane then pushes
+`ghcr.io/iuclabs/<project_name>:<tag>` and `latest` without a Docker daemon
+(`FROM scratch`, each linux binary at `/<binary>` as the entrypoint, OCI
+source/version/revision labels, one index entry per arch) and only then
+publishes the draft. A caller's `dockers_v2` block and Dockerfile are unused.
 
 | Input | Type | Default | Description |
 |---|---|---|---|
 | `vault_role` | string | `release` | Role on the `jwt/github/iuclabs` mount |
-| `snapshot` | boolean | `false` | `goreleaser release --snapshot --clean --skip=publish,sign`; no Vault, no ghcr login |
+| `snapshot` | boolean | `false` | `goreleaser release --snapshot --clean --skip=publish,sign,docker`; no Vault, image pushed to a job-local registry |
 | `runs_on` | string | `iuclabs-release` | Runner label |
 | `working_directory` | string | `.` | Directory holding `.goreleaser.yml` |
 

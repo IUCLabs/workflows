@@ -1,4 +1,4 @@
-# goreleaser release of a Vault/OpenBao plugin: RPMs, raw binary, Vault-GPG-signed checksums and the ghcr plugin image. Callers grant `contents: write`, `id-token: write` and `packages: write`.
+# goreleaser release of a Vault/OpenBao plugin: RPMs, raw binary and Vault-GPG-signed checksums, then the ghcr plugin image via crane (no Docker daemon). Callers grant `contents: write`, `id-token: write` and `packages: write`.
 name: release-vault-plugin
 
 on:
@@ -24,6 +24,9 @@ on:
       artifacts:
         description: goreleaser dist/artifacts.json.
         value: ${{ jobs.release.outputs.artifacts }}
+      image:
+        description: Pushed plugin image as <ref>:<tag>@<digest>; snapshot pushes to a job-local registry.
+        value: ${{ jobs.release.outputs.image }}
 
 permissions: {}
 
@@ -38,6 +41,7 @@ jobs:
       VAULT_ADDR: https://vault.service.consul:8200
     outputs:
       artifacts: ${{ steps.goreleaser.outputs.artifacts }}
+      image: ${{ steps.image.outputs.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,13 +52,13 @@ jobs:
           go-version-file: ${{ inputs.working_directory }}/go.mod
           # release artifacts must not be built from a cache a PR run could have written
           cache: false
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - run: go install github.com/google/go-containerregistry/cmd/crane@v0.22.1
+        env:
+          GOTOOLCHAIN: auto
       - if: ${{ !inputs.snapshot }}
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
+        run: echo "${GITHUB_TOKEN}" | crane auth login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - if: ${{ !inputs.snapshot }}
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
@@ -69,7 +73,52 @@ jobs:
         with:
           distribution: goreleaser
           version: v2.20.2
-          args: ${{ inputs.snapshot && 'release --snapshot --clean --skip=publish,sign' || 'release --clean' }}
+          # the image is built daemonlessly below; the draft is published only after it is pushed
+          args: ${{ inputs.snapshot && 'release --snapshot --clean --skip=publish,sign,docker' || 'release --clean --skip=docker --draft' }}
           workdir: ${{ inputs.working_directory }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
+      - id: image
+        name: build plugin image
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          SNAPSHOT: ${{ inputs.snapshot }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          registry=ghcr.io
+          if [ "${SNAPSHOT}" = true ]; then
+            registry=127.0.0.1:5000
+            crane registry serve --address "${registry}" >"${RUNNER_TEMP}/registry.log" 2>&1 &
+            for _ in $(seq 50); do crane catalog "${registry}" >/dev/null 2>&1 && break; sleep 0.1; done
+          fi
+          img="${registry}/iuclabs/$(jq -r .project_name dist/metadata.json)"
+          tag=$(jq -r .tag dist/metadata.json)
+          labels=(
+            -l "org.opencontainers.image.source=${SOURCE}"
+            -l "org.opencontainers.image.version=$(jq -r .version dist/metadata.json)"
+            -l "org.opencontainers.image.revision=$(jq -r .commit dist/metadata.json)"
+          )
+          manifests=()
+          # FROM scratch with the binary at /<name>, as the plugin ImageVolume subPath expects
+          while IFS=$'\t' read -r path arch; do
+            bin=$(basename "${path}")
+            tar --owner=0 --group=0 --numeric-owner -cf "${RUNNER_TEMP}/layer.tar" -C "$(dirname "${path}")" "${bin}"
+            ref=$(crane append --oci-empty-base -f "${RUNNER_TEMP}/layer.tar" -t "${img}:${tag}")
+            ref=$(crane mutate "${ref}" --set-platform "linux/${arch}" --entrypoint "/${bin}" "${labels[@]}")
+            crane export "${ref}" - | tar -t | grep -qx "${bin}"
+            manifests+=(-m "${ref}")
+          done < <(jq -r '.[] | select(.type == "Binary" and .goos == "linux") | [.path, .goarch] | @tsv' dist/artifacts.json)
+          [ "${#manifests[@]}" -gt 0 ] || { echo "::error::no linux binaries in dist/artifacts.json"; exit 1; }
+          crane index append "${manifests[@]}" -t "${img}:${tag}"
+          crane tag "${img}:${tag}" latest
+          echo "image=${img}:${tag}@$(crane digest "${img}:${tag}")" >> "${GITHUB_OUTPUT}"
+      - if: ${{ !inputs.snapshot }}
+        name: publish release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          api="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/releases"
+          id=$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" "${api}?per_page=100" \
+            | jq -er --arg t "${TAG}" 'first(.[] | select(.draft and .tag_name == $t)) | .id')
+          curl -fsSL -X PATCH -H "Authorization: Bearer ${GITHUB_TOKEN}" -d '{"draft":false}' "${api}/${id}" >/dev/null

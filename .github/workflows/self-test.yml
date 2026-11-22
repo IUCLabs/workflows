@@ -114,9 +114,11 @@ jobs:
       - run: |
           jq -e 'any(.[]; .type == "Binary" and .name == "vault-plugin-fixture")' <<<"${ARTIFACTS}"
           jq -e '[.[] | select(.type == "Linux Package" and (.name | endswith(".rpm")))] | length == 2' <<<"${ARTIFACTS}"
-          jq -e 'any(.[]; .type == "Docker Image" and (.name | startswith("ghcr.io/iuclabs/vault-plugin-fixture:")))' <<<"${ARTIFACTS}"
+          echo "image: ${IMAGE}"
+          [[ "${IMAGE}" == 127.0.0.1:5000/iuclabs/vault-plugin-fixture:v*@sha256:* ]]
         env:
           ARTIFACTS: ${{ needs.release-vault-plugin.outputs.artifacts }}
+          IMAGE: ${{ needs.release-vault-plugin.outputs.image }}
 
   release-terraform-provider:
     uses: ./.github/workflows/release-terraform-provider.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
