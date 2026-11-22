@@ -93,8 +93,8 @@ jobs:
       cover_min: 90
       cover_exclude: /cmd/
 
-  release-vault-plugin:
-    uses: ./.github/workflows/release-vault-plugin.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+  release-goreleaser:
+    uses: ./.github/workflows/release-goreleaser.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
     if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
     # the called job declares release permissions; snapshot mode uses none of them
     permissions:
@@ -106,8 +106,8 @@ jobs:
       runs_on: ubuntu-latest
       working_directory: testdata/vault-plugin
 
-  assert-vault-plugin:
-    needs: release-vault-plugin
+  assert-goreleaser:
+    needs: release-goreleaser
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -123,12 +123,12 @@ jobs:
             and (.config.Labels["org.opencontainers.image.version"] | length > 0)
             and (.config.Labels["org.opencontainers.image.revision"] | test("^[0-9a-f]{40}$")))' <<<"${CONFIGS}"
         env:
-          ARTIFACTS: ${{ needs.release-vault-plugin.outputs.artifacts }}
-          CONFIGS: ${{ needs.release-vault-plugin.outputs.image_configs }}
-          IMAGE: ${{ needs.release-vault-plugin.outputs.image }}
+          ARTIFACTS: ${{ needs.release-goreleaser.outputs.artifacts }}
+          CONFIGS: ${{ needs.release-goreleaser.outputs.image_configs }}
+          IMAGE: ${{ needs.release-goreleaser.outputs.image }}
 
-  release-vault-plugin-no-image:
-    uses: ./.github/workflows/release-vault-plugin.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+  release-goreleaser-no-image:
+    uses: ./.github/workflows/release-goreleaser.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
     if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
     permissions:
       contents: write
@@ -140,8 +140,8 @@ jobs:
       runs_on: ubuntu-latest
       working_directory: testdata/vault-plugin
 
-  assert-vault-plugin-no-image:
-    needs: release-vault-plugin-no-image
+  assert-goreleaser-no-image:
+    needs: release-goreleaser-no-image
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -151,9 +151,35 @@ jobs:
           [ -z "${IMAGE}" ] || { echo "::error::image: false still produced ${IMAGE}"; exit 1; }
           [ -z "${CONFIGS}" ] || { echo "::error::image: false still produced image_configs"; exit 1; }
         env:
-          ARTIFACTS: ${{ needs.release-vault-plugin-no-image.outputs.artifacts }}
-          CONFIGS: ${{ needs.release-vault-plugin-no-image.outputs.image_configs }}
-          IMAGE: ${{ needs.release-vault-plugin-no-image.outputs.image }}
+          ARTIFACTS: ${{ needs.release-goreleaser-no-image.outputs.artifacts }}
+          CONFIGS: ${{ needs.release-goreleaser-no-image.outputs.image_configs }}
+          IMAGE: ${{ needs.release-goreleaser-no-image.outputs.image }}
+
+  release-vault-plugin-wrapper:
+    uses: ./.github/workflows/release-vault-plugin.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
+    permissions:
+      contents: write
+      id-token: write
+      packages: write
+    with:
+      snapshot: true
+      runs_on: ubuntu-latest
+      working_directory: testdata/vault-plugin
+
+  assert-vault-plugin-wrapper:
+    needs: release-vault-plugin-wrapper
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - run: |
+          jq -e 'any(.[]; .type == "Binary" and .name == "vault-plugin-fixture")' <<<"${ARTIFACTS}"
+          [[ "${IMAGE}" == 127.0.0.1:5000/iuclabs/vault-plugin-fixture:v*@sha256:* ]]
+          jq -e 'length == 1' <<<"${CONFIGS}"
+        env:
+          ARTIFACTS: ${{ needs.release-vault-plugin-wrapper.outputs.artifacts }}
+          CONFIGS: ${{ needs.release-vault-plugin-wrapper.outputs.image_configs }}
+          IMAGE: ${{ needs.release-vault-plugin-wrapper.outputs.image }}
 
   release-terraform-provider:
     uses: ./.github/workflows/release-terraform-provider.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
