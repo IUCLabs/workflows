@@ -1,4 +1,4 @@
-# docker build of each distros/<name>/ via `make build-<name>`; on a v* tag, `make push-<name>` to artifactapi with a Vault-minted token, then `make push-default` if defined. Callers grant `contents: read` and `id-token: write`; only the tag-run push jobs use the latter.
+# docker build of each distros/<name>/ from its distro.env; on a v* tag push, docker push to artifactapi with a Vault-minted token. Callers grant `contents: read` and `id-token: write`; only the tag-run push jobs use the latter.
 name: container-image
 
 on:
@@ -8,6 +8,14 @@ on:
         description: Push on v* tag push runs; false never pushes. Other refs and events never push.
         type: boolean
         default: true
+      target:
+        description: Dockerfile stage to build and push; empty builds the last stage.
+        type: string
+        default: ""
+      test_target:
+        description: Dockerfile stage built (never pushed) before target on every run, e.g. a smoke test; empty skips it.
+        type: string
+        default: ""
       vault_role:
         description: Role on the jwt/github/iuclabs Vault auth mount; needs identity/oidc/token/artifactapi-writer.
         type: string
@@ -17,7 +25,7 @@ on:
         type: string
         default: iuclabs-build
       working_directory:
-        description: Directory holding the Makefile and distros/.
+        description: Directory holding the Dockerfile and distros/.
         type: string
         default: .
 
@@ -61,11 +69,28 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
-      - run: make "build-${DISTRO}"
+      - &build
+        id: build
         env:
           DISTRO: ${{ matrix.distro }}
+          TARGET: ${{ inputs.target }}
+          TEST_TARGET: ${{ inputs.test_target }}
+        run: |
+          set -u
+          # shellcheck disable=SC1090
+          . "distros/${DISTRO}/distro.env"
+          version=dev
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then version=${GITHUB_REF_NAME#v}; fi
+          repo="${REGISTRY}/docker-internal/${IMAGE:?distros/${DISTRO}/distro.env must set IMAGE}"
+          ref="${repo}:${version}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
+          args=(--build-arg "DISTRO=${DISTRO}")
+          for name in ${BUILD_ARGS:-}; do args+=(--build-arg "${name}=${!name}"); done
+          if [ -n "${TEST_TARGET}" ]; then docker build "${args[@]}" --target "${TEST_TARGET}" .; fi
+          if [ -n "${TARGET}" ]; then args+=(--target "${TARGET}"); fi
+          docker build "${args[@]}" -t "${ref}" .
+          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+          if [ "${DEFAULT:-}" = true ]; then echo "default_ref=${repo}:${version}" >> "${GITHUB_OUTPUT}"; fi
 
   push:
     needs: distros
@@ -84,11 +109,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
-      - run: make "build-${DISTRO}"
-        env:
-          DISTRO: ${{ matrix.distro }}
+      - *build
       # login after the build: vault tokens live 15m
       - uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
@@ -101,51 +123,13 @@ jobs:
             identity/oidc/token/artifactapi-writer token | ARTIFACTAPI_TOKEN
       - run: |
           docker login "${REGISTRY}" -u ci --password-stdin <<<"${ARTIFACTAPI_TOKEN}"
-          make "push-${DISTRO}"
+          docker push "${REF}"
+          if [ -n "${DEFAULT_REF}" ]; then
+            docker tag "${REF}" "${DEFAULT_REF}"
+            docker push "${DEFAULT_REF}"
+          fi
         env:
           # keep the token out of ~/.docker on long-lived runners
           DOCKER_CONFIG: ${{ runner.temp }}/docker
-          DISTRO: ${{ matrix.distro }}
-
-  push-default:
-    needs: push
-    runs-on: ${{ inputs.runs_on }}
-    permissions:
-      contents: read
-      id-token: write
-    defaults:
-      run:
-        working-directory: ${{ inputs.working_directory }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      # a goal with no rule prints make's database without running any recipe; defined = a rule with a recipe or prerequisites
-      - id: target
-        run: |
-          if make -pq .container-image-probe 2>/dev/null | awk '
-            /^# Not a target:/ { skip = 1; next }
-            /^push-default::?/ && !skip { entry = 1; if ($0 ~ /^push-default::?[[:space:]]*[^[:space:]]/) found = 1 }
-            entry && /^#  recipe to execute/ { found = 1 }
-            /^$/ { entry = 0 }
-            { skip = 0 }
-            END { exit !found }'; then
-            echo "defined=true" >> "${GITHUB_OUTPUT}"
-          fi
-      - if: steps.target.outputs.defined == 'true'
-        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
-        with:
-          url: ${{ env.VAULT_ADDR }}
-          method: jwt
-          path: jwt/github/iuclabs
-          role: ${{ inputs.vault_role }}
-          jwtGithubAudience: ${{ env.VAULT_ADDR }}
-          secrets: |
-            identity/oidc/token/artifactapi-writer token | ARTIFACTAPI_TOKEN
-      - if: steps.target.outputs.defined == 'true'
-        run: |
-          docker login "${REGISTRY}" -u ci --password-stdin <<<"${ARTIFACTAPI_TOKEN}"
-          make push-default
-        env:
-          DOCKER_CONFIG: ${{ runner.temp }}/docker
+          REF: ${{ steps.build.outputs.ref }}
+          DEFAULT_REF: ${{ steps.build.outputs.default_ref }}

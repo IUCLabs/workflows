@@ -100,10 +100,12 @@ jobs:
       contents: read
       id-token: write
     with:
+      target: image
+      test_target: test
       runs_on: ubuntu-latest
       working_directory: testdata/container-image
 
-  container-image-probe:
+  container-image-tags:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -112,17 +114,22 @@ jobs:
         with:
           persist-credentials: false
       - run: |
-          yq '.jobs["push-default"].steps[] | select(.id == "target") | .run' .github/workflows/container-image.yml >"$RUNNER_TEMP/probe.sh"
-          probe() { : >"$RUNNER_TEMP/out"; (cd "$1" && GITHUB_OUTPUT="$RUNNER_TEMP/out" bash -e "$RUNNER_TEMP/probe.sh"); cat "$RUNNER_TEMP/out"; }
-          [ "$(probe testdata/container-image)" = defined=true ]
-          mkdir "$RUNNER_TEMP/pattern"
-          printf 'push-%%:\n\t@exit 1\n' >"$RUNNER_TEMP/pattern/Makefile"
-          [ -z "$(probe "$RUNNER_TEMP/pattern")" ]
-          mkdir "$RUNNER_TEMP/phony"
-          printf '.PHONY: push-default\nall: push-default\n' >"$RUNNER_TEMP/phony/Makefile"
-          [ -z "$(probe "$RUNNER_TEMP/phony")" ]
-          [ -z "$(probe testdata/go-mod)" ]
-          echo "push-default probe: explicit target found, push-%, .PHONY/prerequisite-only mentions and no Makefile ignored"
+          yq 'explode(.) | .jobs.push.steps[] | select(.id == "build") | .run' .github/workflows/container-image.yml >"$RUNNER_TEMP/build.sh"
+          # stub docker logs its arguments, so the tag-run naming is checked without a registry
+          mkdir "$RUNNER_TEMP/stub"
+          printf '#!/bin/sh\necho "$*" >>"$DOCKER_LOG"\n' >"$RUNNER_TEMP/stub/docker"
+          chmod +x "$RUNNER_TEMP/stub/docker"
+          export DOCKER_LOG="$RUNNER_TEMP/docker.log" GITHUB_OUTPUT="$RUNNER_TEMP/out" REGISTRY=r.example TARGET=image TEST_TARGET=""
+          try() { : >"$DOCKER_LOG"; : >"$GITHUB_OUTPUT"; (cd testdata/container-image && PATH="$RUNNER_TEMP/stub:$PATH" GITHUB_REF="$1" GITHUB_REF_NAME="${1##*/}" DISTRO="$2" bash -e "$RUNNER_TEMP/build.sh"); cat "$GITHUB_OUTPUT" "$DOCKER_LOG"; }
+          try refs/tags/v1.2.3 alpha
+          grep -qx 'ref=r.example/docker-internal/fixture:1.2.3-alpha' "$GITHUB_OUTPUT"
+          grep -qx 'default_ref=r.example/docker-internal/fixture:1.2.3' "$GITHUB_OUTPUT"
+          grep -qx 'build --build-arg DISTRO=alpha --build-arg GREETING=hello --target image -t r.example/docker-internal/fixture:1.2.3-alpha .' "$DOCKER_LOG"
+          try refs/tags/v1.2.3 beta
+          [ "$(cat "$GITHUB_OUTPUT")" = 'ref=r.example/docker-internal/fixture-beta:1.2.3' ]
+          try refs/heads/main alpha
+          grep -qx 'ref=r.example/docker-internal/fixture:dev-alpha' "$GITHUB_OUTPUT"
+          echo "tags: <version>[-TAG_SUFFIX], DEFAULT alias, BUILD_ARGS and dev on non-tag refs all as expected"
 
   release-goreleaser:
     uses: ./.github/workflows/release-goreleaser.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
