@@ -117,6 +117,7 @@ jobs:
           yq 'explode(.) | .jobs.push.steps[] | select(.id == "build") | .run' .github/workflows/container-image.yml >"$RUNNER_TEMP/build.sh"
           # stub docker logs its arguments, so the tag-run naming is checked without a registry
           mkdir "$RUNNER_TEMP/stub"
+          # shellcheck disable=SC2016
           printf '#!/bin/sh\necho "$*" >>"$DOCKER_LOG"\n' >"$RUNNER_TEMP/stub/docker"
           chmod +x "$RUNNER_TEMP/stub/docker"
           export DOCKER_LOG="$RUNNER_TEMP/docker.log" GITHUB_OUTPUT="$RUNNER_TEMP/out" REGISTRY=r.example TARGET=image TEST_TARGET=""
