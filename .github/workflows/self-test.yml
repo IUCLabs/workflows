@@ -100,7 +100,6 @@ jobs:
       contents: read
       id-token: write
     with:
-      push: false
       runs_on: ubuntu-latest
       working_directory: testdata/container-image
 
@@ -119,8 +118,11 @@ jobs:
           mkdir "$RUNNER_TEMP/pattern"
           printf 'push-%%:\n\t@exit 1\n' >"$RUNNER_TEMP/pattern/Makefile"
           [ -z "$(probe "$RUNNER_TEMP/pattern")" ]
+          mkdir "$RUNNER_TEMP/phony"
+          printf '.PHONY: push-default\nall: push-default\n' >"$RUNNER_TEMP/phony/Makefile"
+          [ -z "$(probe "$RUNNER_TEMP/phony")" ]
           [ -z "$(probe testdata/go-mod)" ]
-          echo "push-default probe: explicit target found, push-% and no Makefile ignored"
+          echo "push-default probe: explicit target found, push-%, .PHONY/prerequisite-only mentions and no Makefile ignored"
 
   release-goreleaser:
     uses: ./.github/workflows/release-goreleaser.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form

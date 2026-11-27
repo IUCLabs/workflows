@@ -22,7 +22,7 @@ keep-existing}`, so `make patch|minor|major` drafts the release and the tag
 push fills and publishes it.
 
 Every workflow takes a `runs_on` string input (runner label) used by all of its
-jobs: `ubuntu-latest` for CI workflows, `iuclabs-release` for release ones and
+jobs: `ubuntu-latest` for CI workflows, `iuclabs-release` for release ones,
 `iuclabs-infra` for terraform ones and `iuclabs-build` for `container-image.yml`.
 
 ## Caller job ids
@@ -197,7 +197,7 @@ The caller's Makefile provides:
 |---|---|---|
 | `build-<distro>` | every run, one job per distro | `docker build` the image tagged `artifactapi.k8s.syd1.au.unkin.net/docker-internal/<image>:<version>` |
 | `push-<distro>` | tag runs, same job, after a fresh Vault login and `docker login` | `docker push` that tag |
-| `push-default` | tag runs, once after every push job, only if explicitly defined (`push-%` does not count) | move the default tag (e.g. `latest`); it runs in a fresh job, so pull or retag remotely rather than reuse a local build |
+| `push-default` | tag runs, once after every push job, only if it has a rule with a recipe or prerequisites (`push-%` or a bare `.PHONY` entry does not count) | move the default tag (e.g. `latest`); it runs in a fresh job, so pull or retag remotely rather than reuse a local build |
 
 The version comes from the Makefile (e.g. `git describe --tags --exact-match`;
 checkout uses `fetch-depth: 0`). The login token is
@@ -207,7 +207,7 @@ lives 15 minutes. container-base's Makefile already has `build-%`; it adds
 
 | Input | Type | Default | Description |
 |---|---|---|---|
-| `push` | boolean | `true` | Push on `v*` tag runs; `false` never pushes; other refs never push |
+| `push` | boolean | `true` | Push on `v*` tag push runs; `false` never pushes; other refs and events never push |
 | `vault_role` | string | `release` | Role on the `jwt/github/iuclabs` mount; needs `identity/oidc/token/artifactapi-writer` |
 | `runs_on` | string | `iuclabs-build` | Runner label; needs a Docker daemon that trusts artifactapi |
 | `working_directory` | string | `.` | Directory holding the Makefile and `distros/` |
