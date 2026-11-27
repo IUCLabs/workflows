@@ -51,6 +51,18 @@ jobs:
         run: |
           distros=$(find distros -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | jq -Rnc '[inputs]')
           jq -e 'length > 0' <<<"${distros}" >/dev/null || { echo "::error::no directories under distros/"; exit 1; }
+          # one line per pushed ref plus a DEFAULT marker, so any duplicate is a clash
+          refs=$(mktemp)
+          while IFS= read -r d; do
+            (
+              # shellcheck disable=SC1090
+              . "distros/${d}/distro.env"
+              echo "${IMAGE:?distros/${d}/distro.env must set IMAGE}:<version>${TAG_SUFFIX:+-${TAG_SUFFIX}}"
+              if [ "${DEFAULT:-}" = true ]; then echo DEFAULT; [ -z "${TAG_SUFFIX:-}" ] || echo "${IMAGE}:<version>"; fi
+            ) >>"${refs}"
+          done < <(jq -r '.[]' <<<"${distros}")
+          dups=$(sort "${refs}" | uniq -d)
+          [ -z "${dups}" ] || { echo "::error::more than one distro sets DEFAULT=\"true\" or pushes the same ref: ${dups//$'\n'/ }"; exit 1; }
           echo "distros=${distros}" >> "${GITHUB_OUTPUT}"
 
   build:
@@ -85,12 +97,17 @@ jobs:
           repo="${REGISTRY}/docker-internal/${IMAGE:?distros/${DISTRO}/distro.env must set IMAGE}"
           ref="${repo}:${version}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
           args=(--build-arg "DISTRO=${DISTRO}")
-          for name in ${BUILD_ARGS:-}; do args+=(--build-arg "${name}=${!name}"); done
+          set -f
+          for name in ${BUILD_ARGS:-}; do
+            [[ ${name} =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "::error::bad BUILD_ARGS name ${name}"; exit 1; }
+            args+=(--build-arg "${name}=${!name}")
+          done
+          set +f
           if [ -n "${TEST_TARGET}" ]; then docker build "${args[@]}" --target "${TEST_TARGET}" .; fi
           if [ -n "${TARGET}" ]; then args+=(--target "${TARGET}"); fi
           docker build "${args[@]}" -t "${ref}" .
           echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
-          if [ "${DEFAULT:-}" = true ]; then echo "default_ref=${repo}:${version}" >> "${GITHUB_OUTPUT}"; fi
+          if [ "${DEFAULT:-}" = true ] && [ -n "${TAG_SUFFIX:-}" ]; then echo "default_ref=${repo}:${version}" >> "${GITHUB_OUTPUT}"; fi
 
   push:
     needs: distros

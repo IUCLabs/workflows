@@ -191,9 +191,13 @@ daemon, which must trust artifactapi (`/etc/docker/certs.d/`); a buildx
 `docker-container` builder would not. No `make` is needed. Pushing runs when
 `push` is true, the event is `push` and `github.ref` is a `v*` tag.
 
-Each job sources `distros/<distro>/distro.env` and runs
-`docker build --build-arg DISTRO=<distro> [--target <target>] -t <ref> .` from
-`working_directory`, where `<ref>` is
+The `distros` job fails if more than one distro sets `DEFAULT="true"` or two
+distros would push the same ref. Each build job sources
+`distros/<distro>/distro.env` and, from `working_directory`, runs
+`docker build --build-arg DISTRO=<distro> [--build-arg NAME=value…] --target <test_target> .`
+when `test_target` is set, then
+`docker build --build-arg DISTRO=<distro> [--build-arg NAME=value…] [--target <target>] -t <ref> .`,
+with one `--build-arg` per `BUILD_ARGS` name. `<ref>` is
 `artifactapi.k8s.syd1.au.unkin.net/docker-internal/<IMAGE>:<version>[-<TAG_SUFFIX>]`
 and `<version>` is the tag without its `v` (`dev` on other refs). Tag runs then
 `docker push` it after a fresh Vault login and `docker login`.
@@ -202,8 +206,8 @@ and `<version>` is the tag without its `v` (`dev` on other refs). Tag runs then
 |---|---|---|
 | `IMAGE` | yes | Image name under `docker-internal/` |
 | `TAG_SUFFIX` | no | Appended to the tag as `-<TAG_SUFFIX>` |
-| `DEFAULT` | no | `"true"` also pushes the same image as `:<version>`; set it on at most one distro |
-| `BUILD_ARGS` | no | Space-separated names of distro.env variables passed as `--build-arg NAME=value` |
+| `DEFAULT` | no | `"true"` on a distro with `TAG_SUFFIX` also pushes the same image as `:<version>`; at most one distro |
+| `BUILD_ARGS` | no | Space-separated shell variable names from distro.env, each passed as `--build-arg NAME=value` |
 
 The login token is `identity/oidc/token/artifactapi-writer`, minted after the
 build because it lives 15 minutes. Single-image repos move to one

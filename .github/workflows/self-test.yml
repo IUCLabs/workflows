@@ -130,7 +130,38 @@ jobs:
           [ "$(cat "$GITHUB_OUTPUT")" = 'ref=r.example/docker-internal/fixture-beta:1.2.3' ]
           try refs/heads/main alpha
           grep -qx 'ref=r.example/docker-internal/fixture:dev-alpha' "$GITHUB_OUTPUT"
-          echo "tags: <version>[-TAG_SUFFIX], DEFAULT alias, BUILD_ARGS and dev on non-tag refs all as expected"
+          TEST_TARGET="test" try refs/tags/v1.2.3 alpha
+          [ "$(head -n1 "$DOCKER_LOG")" = 'build --build-arg DISTRO=alpha --build-arg GREETING=hello --target test .' ]
+          mkdir "$RUNNER_TEMP/badarg"
+          cp -r testdata/container-image/. "$RUNNER_TEMP/badarg"
+          echo 'BUILD_ARGS="a[0]"' >>"$RUNNER_TEMP/badarg/distros/beta/distro.env"
+          if (cd "$RUNNER_TEMP/badarg" && PATH="$RUNNER_TEMP/stub:$PATH" GITHUB_REF=refs/heads/main GITHUB_REF_NAME=main DISTRO=beta bash -e "$RUNNER_TEMP/build.sh"); then
+            echo "::error::BUILD_ARGS accepted a[0]"; exit 1
+          fi
+          echo "tags: <version>[-TAG_SUFFIX], DEFAULT alias, BUILD_ARGS, test stage and dev on non-tag refs all as expected"
+
+  container-image-distros:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: |
+          yq '.jobs.distros.steps[] | select(.id == "list") | .run' .github/workflows/container-image.yml >"$RUNNER_TEMP/list.sh"
+          list() { : >"$RUNNER_TEMP/out"; (cd "$1" && GITHUB_OUTPUT="$RUNNER_TEMP/out" bash -e "$RUNNER_TEMP/list.sh"); }
+          list testdata/container-image
+          grep -qx 'distros=\["alpha","beta"\]' "$RUNNER_TEMP/out"
+          mkdir "$RUNNER_TEMP/two-defaults" "$RUNNER_TEMP/same-ref"
+          cp -r testdata/container-image/. "$RUNNER_TEMP/two-defaults"
+          echo 'DEFAULT="true"' >>"$RUNNER_TEMP/two-defaults/distros/beta/distro.env"
+          cp -r testdata/container-image/. "$RUNNER_TEMP/same-ref"
+          cp -r "$RUNNER_TEMP/same-ref/distros/beta" "$RUNNER_TEMP/same-ref/distros/gamma"
+          for bad in two-defaults same-ref; do
+            if list "$RUNNER_TEMP/$bad"; then echo "::error::distros accepted $bad"; exit 1; fi
+            echo "rejected: $bad"
+          done
 
   release-goreleaser:
     uses: ./.github/workflows/release-goreleaser.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
