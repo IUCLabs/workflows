@@ -13,6 +13,7 @@ action is pinned by commit SHA; Dependabot bumps them weekly.
 | `release-vault-plugin.yml` | Deprecated, removed in v0.2.0: wrapper that calls `release-goreleaser.yml` |
 | `release-terraform-provider.yml` | goreleaser release, then PUTs the linux_amd64 zip to the artifactapi `terraform-unkin` registry |
 | `release-go-image.yml` | ko build of `ghcr.io/iuclabs/<repo>:<tag>`, then moves `latest` |
+| `container-image.yml` | `make build-<distro>` per `distros/<distro>/`; on `v*` tags `make push-<distro>` (and `make push-default`) to the artifactapi docker registry |
 
 The goreleaser release workflows log in to Vault at
 `https://vault.service.consul:8200` via `jwt/github/iuclabs`. They expect the
@@ -22,7 +23,7 @@ push fills and publishes it.
 
 Every workflow takes a `runs_on` string input (runner label) used by all of its
 jobs: `ubuntu-latest` for CI workflows, `iuclabs-release` for release ones and
-`iuclabs-infra` for terraform ones.
+`iuclabs-infra` for terraform ones and `iuclabs-build` for `container-image.yml`.
 
 ## Caller job ids
 
@@ -36,6 +37,7 @@ what branch protection requires.
 | `actions` | `actions.yml` | `actions / lint`, `actions / audit` |
 | `go` | `go-ci.yml` | `go / lint`, `go / test`, `go / build` |
 | `terraform` | `terraform.yml` | `terraform / fmt`, `terraform / tflint`, `terraform / validate`, `terraform / plan`, `terraform / apply` |
+| `image` | `container-image.yml` | `image / distros`, `image / build (<distro>)`; tag runs: `image / push (<distro>)`, `image / push-default` |
 
 ## Inputs
 
@@ -179,6 +181,53 @@ Permissions: `contents: read`, `packages: write`.
 
 It builds the Go image only. Repos with extra images (artifactapi's UI) keep
 that build and its `latest` tag in their own job with `needs:` on this one.
+
+### container-image.yml
+
+Permissions: `contents: read`, `id-token: write` (only the tag-run push jobs
+use it; callers grant it statically). The matrix is the directory names under
+`distros/`. Each job uses the plain docker CLI against the runner's Docker
+daemon, which must trust artifactapi (`/etc/docker/certs.d/`); a buildx
+`docker-container` builder would not. Pushing runs when `push` is true and
+`github.ref` is a `v*` tag.
+
+The caller's Makefile provides:
+
+| Target | When | Must |
+|---|---|---|
+| `build-<distro>` | every run, one job per distro | `docker build` the image tagged `artifactapi.k8s.syd1.au.unkin.net/docker-internal/<image>:<version>` |
+| `push-<distro>` | tag runs, same job, after a fresh Vault login and `docker login` | `docker push` that tag |
+| `push-default` | tag runs, once after every push job, only if explicitly defined (`push-%` does not count) | move the default tag (e.g. `latest`); it runs in a fresh job, so pull or retag remotely rather than reuse a local build |
+
+The version comes from the Makefile (e.g. `git describe --tags --exact-match`;
+checkout uses `fetch-depth: 0`). The login token is
+`identity/oidc/token/artifactapi-writer`, minted after the build because it
+lives 15 minutes. container-base's Makefile already has `build-%`; it adds
+`push-%`. Single-image repos move to one `distros/<name>/` directory.
+
+| Input | Type | Default | Description |
+|---|---|---|---|
+| `push` | boolean | `true` | Push on `v*` tag runs; `false` never pushes; other refs never push |
+| `vault_role` | string | `release` | Role on the `jwt/github/iuclabs` mount; needs `identity/oidc/token/artifactapi-writer` |
+| `runs_on` | string | `iuclabs-build` | Runner label; needs a Docker daemon that trusts artifactapi |
+| `working_directory` | string | `.` | Directory holding the Makefile and `distros/` |
+
+```yaml
+# .github/workflows/image.yml
+on:
+  pull_request:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+jobs:
+  image:
+    uses: IUCLabs/workflows/.github/workflows/container-image.yml@v0.2.0
+    permissions:
+      contents: read
+      id-token: write
+```
 
 No secrets are passed: the workflows use the caller's `GITHUB_TOKEN` and Vault
 OIDC.

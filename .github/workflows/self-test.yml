@@ -93,6 +93,35 @@ jobs:
       cover_min: 90
       cover_exclude: /cmd/
 
+  container-image:
+    uses: ./.github/workflows/container-image.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+    # the called push jobs declare id-token: write for Vault; a non-tag run uses none of it
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      push: false
+      runs_on: ubuntu-latest
+      working_directory: testdata/container-image
+
+  container-image-probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: |
+          yq '.jobs["push-default"].steps[] | select(.id == "target") | .run' .github/workflows/container-image.yml >"$RUNNER_TEMP/probe.sh"
+          probe() { : >"$RUNNER_TEMP/out"; (cd "$1" && GITHUB_OUTPUT="$RUNNER_TEMP/out" bash -e "$RUNNER_TEMP/probe.sh"); cat "$RUNNER_TEMP/out"; }
+          [ "$(probe testdata/container-image)" = defined=true ]
+          mkdir "$RUNNER_TEMP/pattern"
+          printf 'push-%%:\n\t@exit 1\n' >"$RUNNER_TEMP/pattern/Makefile"
+          [ -z "$(probe "$RUNNER_TEMP/pattern")" ]
+          [ -z "$(probe testdata/go-mod)" ]
+          echo "push-default probe: explicit target found, push-% and no Makefile ignored"
+
   release-goreleaser:
     uses: ./.github/workflows/release-goreleaser.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
     if: github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'
