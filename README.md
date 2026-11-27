@@ -13,7 +13,7 @@ action is pinned by commit SHA; Dependabot bumps them weekly.
 | `release-vault-plugin.yml` | Deprecated, removed in v0.2.0: wrapper that calls `release-goreleaser.yml` |
 | `release-terraform-provider.yml` | goreleaser release, then PUTs the linux_amd64 zip to the artifactapi `terraform-unkin` registry |
 | `release-go-image.yml` | ko build of `ghcr.io/iuclabs/<repo>:<tag>`, then moves `latest` |
-| `container-image.yml` | `make build-<distro>` per `distros/<distro>/`; on `v*` tags `make push-<distro>` (and `make push-default`) to the artifactapi docker registry |
+| `container-image.yml` | `docker build` per `distros/<distro>/` from its `distro.env`; on `v*` tags `docker push` to the artifactapi docker registry |
 
 The goreleaser release workflows log in to Vault at
 `https://vault.service.consul:8200` via `jwt/github/iuclabs`. They expect the
@@ -22,7 +22,7 @@ keep-existing}`, so `make patch|minor|major` drafts the release and the tag
 push fills and publishes it.
 
 Every workflow takes a `runs_on` string input (runner label) used by all of its
-jobs: `ubuntu-latest` for CI workflows, `iuclabs-release` for release ones and
+jobs: `ubuntu-latest` for CI workflows, `iuclabs-release` for release ones,
 `iuclabs-infra` for terraform ones and `iuclabs-build` for `container-image.yml`.
 
 ## Caller job ids
@@ -37,7 +37,7 @@ what branch protection requires.
 | `actions` | `actions.yml` | `actions / lint`, `actions / audit` |
 | `go` | `go-ci.yml` | `go / lint`, `go / test`, `go / build` |
 | `terraform` | `terraform.yml` | `terraform / fmt`, `terraform / tflint`, `terraform / validate`, `terraform / plan`, `terraform / apply` |
-| `image` | `container-image.yml` | `image / distros`, `image / build (<distro>)`; tag runs: `image / push (<distro>)`, `image / push-default` |
+| `image` | `container-image.yml` | `image / distros`, `image / build (<distro>)`; tag runs: `image / push (<distro>)` |
 
 ## Inputs
 
@@ -188,29 +188,39 @@ Permissions: `contents: read`, `id-token: write` (only the tag-run push jobs
 use it; callers grant it statically). The matrix is the directory names under
 `distros/`. Each job uses the plain docker CLI against the runner's Docker
 daemon, which must trust artifactapi (`/etc/docker/certs.d/`); a buildx
-`docker-container` builder would not. Pushing runs when `push` is true and
-`github.ref` is a `v*` tag.
+`docker-container` builder would not. No `make` is needed. Pushing runs when
+`push` is true, the event is `push` and `github.ref` is a `v*` tag.
 
-The caller's Makefile provides:
+The `distros` job fails if more than one distro sets `DEFAULT="true"` or two
+distros would push the same ref. Each build job sources
+`distros/<distro>/distro.env` and, from `working_directory`, runs
+`docker build --build-arg DISTRO=<distro> [--build-arg NAME=value…] --target <test_target> .`
+when `test_target` is set, then
+`docker build --build-arg DISTRO=<distro> [--build-arg NAME=value…] [--target <target>] -t <ref> .`,
+with one `--build-arg` per `BUILD_ARGS` name. `<ref>` is
+`artifactapi.k8s.syd1.au.unkin.net/docker-internal/<IMAGE>:<version>[-<TAG_SUFFIX>]`
+and `<version>` is the tag without its `v` (`dev` on other refs). Tag runs then
+`docker push` it after a fresh Vault login and `docker login`.
 
-| Target | When | Must |
+| distro.env key | Required | Effect |
 |---|---|---|
-| `build-<distro>` | every run, one job per distro | `docker build` the image tagged `artifactapi.k8s.syd1.au.unkin.net/docker-internal/<image>:<version>` |
-| `push-<distro>` | tag runs, same job, after a fresh Vault login and `docker login` | `docker push` that tag |
-| `push-default` | tag runs, once after every push job, only if explicitly defined (`push-%` does not count) | move the default tag (e.g. `latest`); it runs in a fresh job, so pull or retag remotely rather than reuse a local build |
+| `IMAGE` | yes | Image name under `docker-internal/` |
+| `TAG_SUFFIX` | no | Appended to the tag as `-<TAG_SUFFIX>` |
+| `DEFAULT` | no | `"true"` on a distro with `TAG_SUFFIX` also pushes the same image as `:<version>`; at most one distro |
+| `BUILD_ARGS` | no | Space-separated shell variable names from distro.env, each passed as `--build-arg NAME=value` |
 
-The version comes from the Makefile (e.g. `git describe --tags --exact-match`;
-checkout uses `fetch-depth: 0`). The login token is
-`identity/oidc/token/artifactapi-writer`, minted after the build because it
-lives 15 minutes. container-base's Makefile already has `build-%`; it adds
-`push-%`. Single-image repos move to one `distros/<name>/` directory.
+The login token is `identity/oidc/token/artifactapi-writer`, minted after the
+build because it lives 15 minutes. Single-image repos move to one
+`distros/<name>/` directory.
 
 | Input | Type | Default | Description |
 |---|---|---|---|
-| `push` | boolean | `true` | Push on `v*` tag runs; `false` never pushes; other refs never push |
+| `push` | boolean | `true` | Push on `v*` tag push runs; `false` never pushes; other refs and events never push |
+| `target` | string | `""` | Dockerfile stage to build and push; empty builds the last stage |
+| `test_target` | string | `""` | Stage built (never pushed) before `target` on every run, e.g. a smoke test |
 | `vault_role` | string | `release` | Role on the `jwt/github/iuclabs` mount; needs `identity/oidc/token/artifactapi-writer` |
 | `runs_on` | string | `iuclabs-build` | Runner label; needs a Docker daemon that trusts artifactapi |
-| `working_directory` | string | `.` | Directory holding the Makefile and `distros/` |
+| `working_directory` | string | `.` | Directory holding the Dockerfile and `distros/` |
 
 ```yaml
 # .github/workflows/image.yml
